@@ -207,6 +207,7 @@ class RequirementValidator:
                 related_field="season",
                 expected_answer_format="Season year or financial year.",
                 is_present=lambda info, metadata: bool(info.season)
+                or bool(info.seasons)
                 or self._has_metadata_value(metadata, "financial_year"),
             ),
             MandatoryFieldRule(

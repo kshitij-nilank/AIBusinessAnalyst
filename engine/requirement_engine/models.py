@@ -99,10 +99,19 @@ class KnownInformation(BaseModel):
         le=2200,
         description="Business season referenced by the request.",
     )
+    seasons: list[int] = Field(
+        default_factory=list,
+        description="Multiple business seasons referenced by comparison requests.",
+    )
     sale_range: str | None = Field(
         default=None,
         min_length=1,
         description="Requested sale range, preserved as stakeholder-provided text.",
+    )
+    garden: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Requested garden or mark name, if the report is garden-specific.",
     )
     area: str | None = Field(
         default=None,
