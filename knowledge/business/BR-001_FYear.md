@@ -1,9 +1,19 @@
 Rule ID: BR-001
-Category: Financial Year
+Name: Financial Year
+Category: Reporting
 Priority: High
 Status: Approved
-Owner: Business Team
+Business Owner: Business Team
+Technical Owner: AI Business Analyst
+Applies To:
+  - Weekly Reports
+  - Monthly Reports
+  - Ad-hoc Reports
+Version: 1.0
+Status: Approved
 Last Reviewed: 2026-07-04
+
+
 
 ## Rule Name
 
