@@ -1,0 +1,8 @@
+output/
+*.xlsx
+*.xlsm
+*.csv
+*.pdf
+__pycache__/
+.env
+*.zip
