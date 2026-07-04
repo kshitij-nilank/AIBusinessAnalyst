@@ -1,5 +1,49 @@
 # Database Schema Reference
 
+## Main Tables Found
+
+### `data-warehousing-prod.EasyReports.SaleTransactionView`
+Primary auction transaction table. Use this for most auction sale reports.
+
+Common fields seen:
+- FinYear
+- Season
+- SaleNo
+- Area
+- Centre
+- Category
+- TeaType
+- SubTeaType
+- EstBlf
+- GardenMDM
+- BuyerMDM
+- GradeMDM
+- MDMGradeGroup
+- LotStatus
+- TotalWeight
+- InvoiceWeight
+- Value
+- AuctionDate
+- GPDate
+
+### `data-warehousing-prod.EasyReports.TeaMart`
+TeaMart table. Use when request specifically needs TeaMart/TM view.
+
+### Other tables found
+- `data-warehousing-prod.EasyReports.TI`
+- `data-warehousing-prod.EasyReports.TC_Tasting`
+- `data-warehousing-prod.EasyReports.TC_Privatesale`
+- `data-warehousing-prod.EasyReports.CropBGSG`
+- `data-warehousing-prod.EasyReports.CropCategoryTB`
+- `data-warehousing-prod.EasyReports.Parcon-BuyerGroup`
+- `data-warehousing-prod.EasyReports.Parcon-Caller`
+
+
+
+# Database Schema Reference
+
+
+
 Source files analyzed:
 - `knowledge/SQL UTILITY.sql`
 - `knowledge/Usage Pattern Indexing.sql`
@@ -181,7 +225,7 @@ TeaMart reporting source used with auction data for combined auction/TeaMart ana
 - `Area IN ("AS")`
 - Week range using adjusted week number:
   ```sql
-  IF(WeekNo >= 1 AND WeekNo <= 13, 52 + WeekNo, WeekNo) BETWEEN 14 AND 52
+  IF(WeekNo >= 1 AND WeekNo <= 13, 53 + WeekNo, WeekNo) BETWEEN 14 AND 53
   ```
 - `HAVING SUM(IF(Status = "Sold", TotalWeight, 0)) > 0`
 - `HAVING FYear <> 0`
@@ -231,7 +275,7 @@ SELECT
   COALESCE(SUM(IF(Status = "Sold", TotalWeight, 0)), 0) AS Sold_Qty,
   COALESCE(SUM(TotalValue), 0) AS Total_Value
 FROM `data-warehousing-prod.EasyReports.TeaMart`
-WHERE Season = 2024
+WHERE Season = 2025
   AND Category IN ("ORTHODOX")
   AND EstBlf IN ("EST")
 GROUP BY Season, FYear, GardenMDM, SellerGroup
@@ -255,10 +299,10 @@ TeaInnTech working table source for offer quantity, packages, garden, seller gro
 Unknown.
 
 ### Frequently Used Filters
-- `Season IN (2024, 2025)`
+- `Season IN (2025, 2026)`
 - Adjusted sale number:
   ```sql
-  IF(SaleNo >= 1 AND SaleNo <= 13, 52 + SaleNo, SaleNo) BETWEEN 14 AND 26
+  IF(SaleNo >= 1 AND SaleNo <= 13, 53 + SaleNo, SaleNo) BETWEEN 14 AND 26
   ```
 
 ### Common Calculations
@@ -284,8 +328,8 @@ SELECT
   SUM(OfferQty) AS InvoiceWeight,
   "TeaInnTech" AS Mode
 FROM `data-warehousing-prod.EasyReports.TI`
-WHERE Season IN (2024, 2025)
-  AND IF(SaleNo >= 1 AND SaleNo <= 13, 52 + SaleNo, SaleNo) BETWEEN 14 AND 26
+WHERE Season IN (2025, 2026)
+  AND IF(SaleNo >= 1 AND SaleNo <= 13, 53 + SaleNo, SaleNo) BETWEEN 14 AND 26
 GROUP BY FYear, Centre, Category, GardenMDM, SellerGroup, BrokerCode, Mode;
 ```
 
