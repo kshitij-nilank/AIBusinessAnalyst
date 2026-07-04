@@ -209,12 +209,12 @@ class RequirementResponseParser:
         if not text:
             return ""
 
+        if text.startswith("{") or text.startswith("["):
+            return text
+
         fence_match = self.JSON_FENCE_PATTERN.search(text)
         if fence_match:
             return fence_match.group("json").strip()
-
-        if text.startswith("{") or text.startswith("["):
-            return text
 
         first_object = text.find("{")
         last_object = text.rfind("}")

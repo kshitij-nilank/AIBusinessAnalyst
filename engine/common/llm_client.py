@@ -116,6 +116,32 @@ class LLMClientError(RuntimeError):
     """Raised when the LLM request cannot be completed."""
 
 
+class OfflineRequirementLLMClient:
+    """Offline fallback client that returns a minimal raw analysis response.
+
+    This client exists so the CLI can demonstrate the full Requirement
+    Understanding Engine without configured external credentials. It does not
+    perform business reasoning; it returns the raw requirement text in the
+    expected JSON shape and lets the parser and validator do their work.
+    """
+
+    def generate(self, prompt: str) -> str:
+        """Return a raw JSON response compatible with RequirementAnalysis."""
+
+        return json.dumps(
+            {
+                "summary": "Requirement received for analysis.",
+                "known_information": {
+                    "raw_request_text": prompt,
+                },
+                "metadata": {
+                    "confidence_score": 0.4,
+                    "llm_mode": "offline_fallback",
+                },
+            }
+        )
+
+
 class LLMClient:
     """Small provider-neutral client for LLM HTTP calls.
 
@@ -134,7 +160,12 @@ class LLMClient:
     def from_env(cls) -> "LLMClient":
         """Create an LLM client from environment configuration."""
 
-        return cls(config=LLMConfig.from_env())
+        config = LLMConfig.from_env()
+        if config.provider != LLMProvider.LOCAL and not config.api_key:
+            raise LLMClientError(
+                "Missing required environment variable: LLM_API_KEY"
+            )
+        return cls(config=config)
 
     def complete(
         self,
@@ -195,7 +226,7 @@ class LLMClient:
         body = json.dumps(payload).encode("utf-8")
         headers = self._build_headers()
         request = Request(
-            self.config.base_url,
+            self._endpoint_url(),
             data=body,
             headers=headers,
             method="POST",
@@ -260,6 +291,17 @@ class LLMClient:
                 headers.setdefault("Authorization", f"Bearer {self.config.api_key}")
 
         return headers
+
+    def _endpoint_url(self) -> str:
+        """Return the final HTTP endpoint for the configured provider."""
+
+        base_url = self.config.base_url.rstrip("/")
+        if (
+            self.config.provider == LLMProvider.OPENAI
+            and not base_url.endswith("/chat/completions")
+        ):
+            return f"{base_url}/chat/completions"
+        return self.config.base_url
 
     def _build_payload(
         self,

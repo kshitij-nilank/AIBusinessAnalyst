@@ -12,7 +12,8 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
-from engine.common.llm_client import LLMClient, LLMClientError
+from engine.common.config import load_environment
+from engine.common.llm_client import LLMClient, LLMClientError, OfflineRequirementLLMClient
 from engine.requirement_engine.knowledge_loader import KnowledgeLoader
 from engine.requirement_engine.models import RequirementAnalysis
 from engine.requirement_engine.orchestrator import (
@@ -51,7 +52,26 @@ class JsonModeLLMClient:
     def generate(self, prompt: str) -> Any:
         """Generate a raw JSON-mode LLM response for the orchestrator."""
 
-        return self.client.generate(prompt, json_mode=True)
+        try:
+            response = self.client.generate(prompt, json_mode=True)
+        except LLMClientError:
+            logger.warning(
+                "LLM call failed; using offline fallback client.",
+                extra={"event": "llm_call_offline_fallback"},
+            )
+            return OfflineRequirementLLMClient().generate(prompt)
+
+        status_code = getattr(response, "status_code", 200)
+        if isinstance(status_code, int) and status_code >= 400:
+            logger.warning(
+                "LLM returned an error response; using offline fallback client.",
+                extra={
+                    "event": "llm_error_response_offline_fallback",
+                    "status_code": status_code,
+                },
+            )
+            return OfflineRequirementLLMClient().generate(prompt)
+        return response
 
 
 def configure_logging(config: AppConfig) -> None:
@@ -66,11 +86,20 @@ def configure_logging(config: AppConfig) -> None:
 def build_orchestrator() -> RequirementUnderstandingOrchestrator:
     """Create and wire Requirement Understanding Engine dependencies.
 
-    Raises:
-        LLMClientError: If required LLM environment configuration is missing.
+    If external LLM configuration is unavailable, an offline fallback client is
+    used so the requirement pipeline can still return a blocked structured
+    analysis for incomplete requirements.
     """
 
-    llm_client = JsonModeLLMClient(LLMClient.from_env())
+    try:
+        llm_client = JsonModeLLMClient(LLMClient.from_env())
+    except LLMClientError:
+        logger.warning(
+            "LLM configuration missing; using offline fallback client.",
+            extra={"event": "llm_offline_fallback_enabled"},
+        )
+        llm_client = OfflineRequirementLLMClient()
+
     return RequirementUnderstandingOrchestrator(
         knowledge_loader=KnowledgeLoader(),
         prompt_builder=PromptBuilder(),
@@ -93,6 +122,10 @@ def run_interactive_loop(
             requirement = input(prompt).strip()
         except KeyboardInterrupt:
             print("\nApplication interrupted. Closing.")
+            logger.info("Application Closed", extra={"event": "application_closed"})
+            return
+        except EOFError:
+            print("\nApplication closed.")
             logger.info("Application Closed", extra={"event": "application_closed"})
             return
 
@@ -264,19 +297,12 @@ def format_key_value_rows(rows: dict[str, object | None]) -> str:
 def main() -> int:
     """Initialize and run the terminal application."""
 
+    load_environment()
     config = AppConfig.from_env()
     configure_logging(config)
     logger.info("Application Started", extra={"event": "application_started"})
 
-    try:
-        orchestrator = build_orchestrator()
-    except LLMClientError as exc:
-        print("The LLM client is not configured.")
-        print(str(exc))
-        print("Configure LLM_PROVIDER, LLM_BASE_URL, LLM_MODEL, and LLM_API_KEY if required.")
-        logger.error("Application startup failed.", extra={"event": "startup_failed"})
-        return 1
-
+    orchestrator = build_orchestrator()
     run_interactive_loop(orchestrator)
     return 0
 
