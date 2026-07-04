@@ -2,7 +2,12 @@ import json
 import os
 
 import main
+from engine.common.llm_client import OfflineRequirementLLMClient
+from engine.requirement_engine.knowledge_loader import KnowledgeLoader
+from engine.requirement_engine.orchestrator import RequirementUnderstandingOrchestrator
+from engine.requirement_engine.prompt_builder import PromptBuilder
 from engine.requirement_engine.response_parser import RequirementResponseParser
+from engine.requirement_engine.validator import RequirementValidator
 
 
 def test_main_orchestrator_offline_fallback_blocks_incomplete_requirement() -> None:
@@ -38,3 +43,102 @@ def test_response_parser_prefers_outer_json_before_markdown_fences() -> None:
     assert result.ok is True
     assert result.analysis is not None
     assert result.analysis.summary == "Requirement received"
+
+
+def test_hookmol_requirement_response_maps_to_known_information() -> None:
+    raw_llm_response = json.dumps(
+        {
+            "summary": "Garden average comparison report.",
+            "knownInformation": {
+                "reportType": "Garden Average Report",
+                "gardenName": "HOOKMOL",
+                "season": "2025 vs 2026",
+                "saleRange": "up to Sale 26",
+                "metric": "average price",
+                "groupingLevel": "garden-wise",
+                "rawRequirement": (
+                    "GIVE HOOKMOL GARDEN AVERAGES FOR SEASON 2025 VS 2026 "
+                    "UPTO SALE 26"
+                ),
+            },
+            "metadata": {"confidence_score": 0.9},
+        }
+    )
+
+    parsed = RequirementResponseParser().parse(raw_llm_response)
+    assert parsed.analysis is not None
+
+    validated = RequirementValidator().validate(parsed.analysis)
+    known = validated.known_information
+
+    assert known.garden == "HOOKMOL"
+    assert known.seasons == [2025, 2026]
+    assert "Sale 26" in (known.sale_range or "")
+    assert "average price" in known.metrics
+    assert known.output_grain == "garden-wise"
+    assert known.report_type == "Garden Average Report"
+
+
+def test_hookmol_flat_llm_response_maps_to_known_information() -> None:
+    raw_llm_response = json.dumps(
+        {
+            "summary": "Garden average comparison report.",
+            "reportType": "Garden Average Report",
+            "garden": "HOOKMOL",
+            "seasons": [2025, 2026],
+            "saleRange": "up to Sale 26",
+            "metrics": ["average price"],
+            "grouping": "garden-wise",
+        }
+    )
+
+    parsed = RequirementResponseParser().parse(raw_llm_response)
+
+    assert parsed.analysis is not None
+    known = parsed.analysis.known_information
+    assert known.garden == "HOOKMOL"
+    assert known.seasons == [2025, 2026]
+    assert "Sale 26" in (known.sale_range or "")
+    assert "average price" in known.metrics
+    assert known.output_grain == "garden-wise"
+
+
+def test_offline_fallback_extracts_hookmol_requirement() -> None:
+    response = OfflineRequirementLLMClient().generate(
+        "hookmol averages season 2025 vs 2026 upto sale 26"
+    )
+
+    parsed = RequirementResponseParser().parse(response)
+    assert parsed.analysis is not None
+    known = parsed.analysis.known_information
+
+    assert known.garden == "HOOKMOL"
+    assert known.seasons == [2025, 2026]
+    assert known.sale_range == "up to sale 26"
+    assert known.metrics == ["average price"]
+    assert known.output_grain == "garden-wise"
+    assert known.report_type == "Garden Average Report"
+    assert parsed.analysis.metadata["llm_mode"] == "offline_fallback"
+
+
+def test_orchestrator_with_offline_fallback_extracts_hookmol_requirement() -> None:
+    orchestrator = RequirementUnderstandingOrchestrator(
+        knowledge_loader=KnowledgeLoader(),
+        prompt_builder=PromptBuilder(),
+        llm_client=OfflineRequirementLLMClient(),
+        response_parser=RequirementResponseParser(),
+        requirement_validator=RequirementValidator(),
+    )
+
+    result = orchestrator.analyze(
+        "hookmol averages season 2025 vs 2026 upto sale 26"
+    )
+    known = result.known_information
+
+    assert known.garden == "HOOKMOL"
+    assert known.seasons == [2025, 2026]
+    assert known.sale_range == "up to sale 26"
+    assert known.metrics == ["average price"]
+    assert known.output_grain == "garden-wise"
+    assert known.report_type == "Garden Average Report"
+    assert result.sql_generation_allowed is False

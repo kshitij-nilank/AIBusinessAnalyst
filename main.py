@@ -54,20 +54,28 @@ class JsonModeLLMClient:
 
         try:
             response = self.client.generate(prompt, json_mode=True)
-        except LLMClientError:
+        except LLMClientError as exc:
             logger.warning(
-                "LLM call failed; using offline fallback client.",
-                extra={"event": "llm_call_offline_fallback"},
+                "LLM call failed; using offline fallback client. Reason: %s",
+                exc,
+                extra={
+                    "event": "llm_call_offline_fallback",
+                    "reason": str(exc),
+                },
             )
             return OfflineRequirementLLMClient().generate(prompt)
 
         status_code = getattr(response, "status_code", 200)
         if isinstance(status_code, int) and status_code >= 400:
+            body = _truncate_for_log(getattr(response, "body", ""))
             logger.warning(
-                "LLM returned an error response; using offline fallback client.",
+                "LLM returned HTTP %s; using offline fallback client. Body: %s",
+                status_code,
+                body,
                 extra={
                     "event": "llm_error_response_offline_fallback",
                     "status_code": status_code,
+                    "response_body": body,
                 },
             )
             return OfflineRequirementLLMClient().generate(prompt)
@@ -92,7 +100,24 @@ def build_orchestrator() -> RequirementUnderstandingOrchestrator:
     """
 
     try:
-        llm_client = JsonModeLLMClient(LLMClient.from_env())
+        configured_client = LLMClient.from_env()
+        logger.info(
+            "LLM configured: provider=%s model=%s base_url=%s endpoint=%s api_key_present=%s",
+            configured_client.config.provider.value,
+            configured_client.config.model,
+            configured_client.config.base_url,
+            configured_client.endpoint_url,
+            bool(configured_client.config.api_key),
+            extra={
+                "event": "llm_config_loaded",
+                "provider": configured_client.config.provider.value,
+                "model": configured_client.config.model,
+                "base_url": configured_client.config.base_url,
+                "endpoint_url": configured_client.endpoint_url,
+                "api_key_present": bool(configured_client.config.api_key),
+            },
+        )
+        llm_client = JsonModeLLMClient(configured_client)
     except LLMClientError:
         logger.warning(
             "LLM configuration missing; using offline fallback client.",
@@ -207,6 +232,11 @@ def display_analysis(analysis: RequirementAnalysis) -> None:
         "SQL Generation Status",
         "Allowed" if analysis.sql_generation_allowed else "Blocked",
     )
+    if analysis.metadata.get("llm_mode") == "offline_fallback":
+        print_section(
+            "Note",
+            "Offline fallback used because LLM API is unavailable.",
+        )
     print("=" * 50)
 
 
@@ -226,12 +256,16 @@ def format_known_information(analysis: RequirementAnalysis) -> str:
         "Stakeholder": info.stakeholder,
         "Report Type": info.report_type,
         "Season": info.season,
+        "Seasons": ", ".join(str(season) for season in info.seasons)
+        if info.seasons
+        else None,
         "Sale Range": info.sale_range,
         "Area": info.area,
         "Centre": info.centre,
         "Category": info.category,
         "Tea Type": info.tea_type,
         "Sub Tea Type": info.sub_tea_type,
+        "Garden": info.garden,
         "EST/BLF": info.est_blf,
         "Lot Status": info.lot_status,
         "Metrics": ", ".join(info.metrics) if info.metrics else None,
@@ -292,6 +326,15 @@ def format_key_value_rows(rows: dict[str, object | None]) -> str:
         f"- {key}: {value if value not in (None, '') else 'Unknown'}"
         for key, value in rows.items()
     )
+
+
+def _truncate_for_log(value: object, limit: int = 2000) -> str:
+    """Return a bounded string for diagnostic logs."""
+
+    text = str(value)
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}...<truncated>"
 
 
 def main() -> int:

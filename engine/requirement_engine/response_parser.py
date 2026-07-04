@@ -165,6 +165,7 @@ class RequirementResponseParser:
         """Validate decoded JSON against the ``RequirementAnalysis`` schema."""
 
         try:
+            payload = self._normalize_payload(payload)
             analysis = RequirementAnalysis.model_validate(payload)
         except ValidationError as exc:
             return ParsedRequirementAnalysis(
@@ -188,6 +189,189 @@ class RequirementResponseParser:
             raw_json=raw_json,
             raw_payload=payload,
         )
+
+    def _normalize_payload(self, payload: Any) -> Any:
+        """Normalize common LLM JSON variants before schema validation."""
+
+        if not isinstance(payload, dict):
+            return payload
+
+        payload = dict(payload)
+        for wrapper_key in ("requirement_analysis", "requirementAnalysis", "analysis", "result"):
+            wrapped = payload.get(wrapper_key)
+            if isinstance(wrapped, dict):
+                payload = dict(wrapped)
+                break
+
+        payload = _rename_keys(
+            payload,
+            {
+                "requirementId": "requirement_id",
+                "knownInformation": "known_information",
+                "knownInfo": "known_information",
+                "known": "known_information",
+                "missingInformation": "missing_information",
+                "clarificationQuestions": "clarification_questions",
+                "businessRules": "business_rules",
+                "candidateDatabaseObjects": "candidate_database_objects",
+                "candidateObjects": "candidate_database_objects",
+                "sqlGenerationAllowed": "sql_generation_allowed",
+            },
+        )
+
+        if "summary" not in payload:
+            payload["summary"] = payload.get("requirement_summary") or payload.get(
+                "requirementSummary"
+            ) or "Requirement analyzed."
+
+        flat_known_information = self._extract_flat_known_information(payload)
+        for key in flat_known_information:
+            payload.pop(key, None)
+
+        known_information = payload.get("known_information")
+        if not isinstance(known_information, dict):
+            known_information = {}
+        known_information = {
+            **flat_known_information,
+            **known_information,
+        }
+        payload["known_information"] = self._normalize_known_information(
+            known_information
+        )
+
+        payload.setdefault("missing_information", [])
+        payload.setdefault("clarification_questions", [])
+        payload.setdefault("business_rules", [])
+        payload.setdefault("candidate_database_objects", [])
+        payload.setdefault("assumptions", [])
+        payload.setdefault("risks", [])
+        payload.setdefault("sql_generation_allowed", False)
+        payload.setdefault("metadata", {})
+        return payload
+
+    def _extract_flat_known_information(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Collect known-information fields returned at top level by an LLM."""
+
+        known_aliases = {
+            "business_objective",
+            "businessObjective",
+            "objective",
+            "report_type",
+            "reportType",
+            "report",
+            "season",
+            "seasons",
+            "financialYear",
+            "financial_year",
+            "sale_range",
+            "saleRange",
+            "saleNumber",
+            "sale_number",
+            "dateRange",
+            "date_range",
+            "uptoSale",
+            "upToSale",
+            "garden",
+            "gardenName",
+            "garden_name",
+            "mark",
+            "area",
+            "centre",
+            "category",
+            "tea_type",
+            "teaType",
+            "sub_tea_type",
+            "subTeaType",
+            "est_blf",
+            "estBlf",
+            "lot_status",
+            "lotStatus",
+            "metrics",
+            "metric",
+            "grouping",
+            "groupingLevel",
+            "grouping_level",
+            "grain",
+            "output_grain",
+            "outputGrain",
+            "output_format",
+            "outputFormat",
+            "raw_request_text",
+            "rawRequirement",
+            "raw_request",
+            "userRequirement",
+        }
+        return {
+            key: value
+            for key, value in payload.items()
+            if key in known_aliases
+        }
+
+    def _normalize_known_information(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Normalize known-information field names and simple value shapes."""
+
+        normalized = _rename_keys(
+            data,
+            {
+                "businessObjective": "business_objective",
+                "objective": "business_objective",
+                "reportType": "report_type",
+                "report": "report_type",
+                "financialYear": "season",
+                "financial_year": "season",
+                "saleRange": "sale_range",
+                "saleNumber": "sale_range",
+                "sale_number": "sale_range",
+                "dateRange": "sale_range",
+                "date_range": "sale_range",
+                "uptoSale": "sale_range",
+                "upToSale": "sale_range",
+                "gardenName": "garden",
+                "garden_name": "garden",
+                "mark": "garden",
+                "teaType": "tea_type",
+                "tea_type": "tea_type",
+                "subTeaType": "sub_tea_type",
+                "sub_tea_type": "sub_tea_type",
+                "estBlf": "est_blf",
+                "est_blf": "est_blf",
+                "lotStatus": "lot_status",
+                "lot_status": "lot_status",
+                "metric": "metrics",
+                "grouping": "output_grain",
+                "groupingLevel": "output_grain",
+                "grouping_level": "output_grain",
+                "grain": "output_grain",
+                "outputGrain": "output_grain",
+                "outputFormat": "output_format",
+                "rawRequirement": "raw_request_text",
+                "raw_request": "raw_request_text",
+                "userRequirement": "raw_request_text",
+            },
+        )
+
+        if "seasons" not in normalized and "season" in normalized:
+            seasons = _extract_years(normalized.get("season"))
+            if len(seasons) > 1:
+                normalized["seasons"] = seasons
+                normalized["season"] = None
+
+        if "seasons" in normalized:
+            normalized["seasons"] = _extract_years(normalized["seasons"])
+
+        if isinstance(normalized.get("season"), str):
+            years = _extract_years(normalized["season"])
+            normalized["season"] = years[0] if len(years) == 1 else None
+            if len(years) > 1 and not normalized.get("seasons"):
+                normalized["seasons"] = years
+
+        if "metrics" in normalized:
+            normalized["metrics"] = _ensure_list(normalized["metrics"])
+
+        if isinstance(normalized.get("garden"), str):
+            normalized["garden"] = normalized["garden"].strip().upper()
+
+        return normalized
 
     def _coerce_to_text(self, response: RawLLMResponse | str | bytes | dict[str, Any]) -> str:
         """Convert supported response inputs to text."""
@@ -293,3 +477,38 @@ class RequirementResponseParser:
             if isinstance(value, (str, dict)):
                 return value
         return None
+
+
+def _rename_keys(data: dict[str, Any], key_map: dict[str, str]) -> dict[str, Any]:
+    """Return a copy of a dictionary with known aliases renamed."""
+
+    normalized: dict[str, Any] = {}
+    for key, value in data.items():
+        normalized[key_map.get(key, key)] = value
+    return normalized
+
+
+def _ensure_list(value: Any) -> list[Any]:
+    """Return value as a list while preserving existing list contents."""
+
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, tuple | set):
+        return list(value)
+    return [value]
+
+
+def _extract_years(value: Any) -> list[int]:
+    """Extract four-digit years from common scalar or list shapes."""
+
+    values = _ensure_list(value)
+    years: list[int] = []
+    for item in values:
+        if isinstance(item, int):
+            years.append(item)
+            continue
+        for match in re.findall(r"\b(19\d{2}|20\d{2}|21\d{2})\b", str(item)):
+            years.append(int(match))
+    return list(dict.fromkeys(years))

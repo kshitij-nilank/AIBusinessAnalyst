@@ -11,13 +11,18 @@ perform AI reasoning, or know anything about the requirement-engine workflow.
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+
+logger = logging.getLogger(__name__)
 
 
 class LLMProvider(str, Enum):
@@ -128,15 +133,16 @@ class OfflineRequirementLLMClient:
     def generate(self, prompt: str) -> str:
         """Return a raw JSON response compatible with RequirementAnalysis."""
 
+        requirement_text = _extract_user_requirement(prompt)
+        known_information = _extract_known_information_offline(requirement_text)
         return json.dumps(
             {
-                "summary": "Requirement received for analysis.",
-                "known_information": {
-                    "raw_request_text": prompt,
-                },
+                "summary": _offline_summary(known_information),
+                "known_information": known_information,
                 "metadata": {
-                    "confidence_score": 0.4,
+                    "confidence_score": 0.65,
                     "llm_mode": "offline_fallback",
+                    "fallback_reason": "Offline fallback used because LLM API is unavailable.",
                 },
             }
         )
@@ -243,6 +249,15 @@ class LLMClient:
                     timeout=self.config.timeout_seconds,
                 ) as response:
                     raw_body = response.read().decode("utf-8")
+                    logger.debug(
+                        "Raw LLM response body: %s",
+                        _truncate_for_log(raw_body),
+                        extra={
+                            "event": "raw_llm_response",
+                            "status_code": response.status,
+                            "provider": self.config.provider.value,
+                        },
+                    )
                     return RawLLMResponse(
                         status_code=response.status,
                         headers=dict(response.headers.items()),
@@ -252,6 +267,15 @@ class LLMClient:
                     )
             except HTTPError as exc:
                 raw_body = exc.read().decode("utf-8", errors="replace")
+                logger.debug(
+                    "Raw LLM error response body: %s",
+                    _truncate_for_log(raw_body),
+                    extra={
+                        "event": "raw_llm_error_response",
+                        "status_code": exc.code,
+                        "provider": self.config.provider.value,
+                    },
+                )
                 if not self._should_retry(exc.code, attempt, attempts):
                     return RawLLMResponse(
                         status_code=exc.code,
@@ -302,6 +326,12 @@ class LLMClient:
         ):
             return f"{base_url}/chat/completions"
         return self.config.base_url
+
+    @property
+    def endpoint_url(self) -> str:
+        """Final HTTP endpoint URL used for requests."""
+
+        return self._endpoint_url()
 
     def _build_payload(
         self,
@@ -452,3 +482,131 @@ def _required_env(name: str) -> str:
     if not value:
         raise LLMClientError(f"Missing required environment variable: {name}")
     return value
+
+
+def _truncate_for_log(value: str, limit: int = 4000) -> str:
+    """Return bounded diagnostic text for logs."""
+
+    if len(value) <= limit:
+        return value
+    return f"{value[:limit]}...<truncated>"
+
+
+def _extract_user_requirement(prompt: str) -> str:
+    """Extract the user requirement section from an assembled prompt."""
+
+    marker = "## User Requirement"
+    if marker not in prompt:
+        return prompt.strip()
+
+    after_marker = prompt.split(marker, 1)[1].strip()
+    if after_marker.startswith("---"):
+        after_marker = after_marker[3:].strip()
+    if "\n\n---\n\n" in after_marker:
+        return after_marker.split("\n\n---\n\n", 1)[0].strip()
+    return after_marker.strip()
+
+
+def _extract_known_information_offline(requirement_text: str) -> dict[str, Any]:
+    """Perform deterministic fallback extraction from requirement text."""
+
+    text = requirement_text.strip()
+    lower_text = text.lower()
+    garden = _extract_garden(text)
+    metrics = ["average price"] if re.search(r"\b(avg|average|averages)\b", lower_text) else []
+
+    known_information: dict[str, Any] = {
+        "business_objective": None,
+        "report_type": "Garden Average Report" if garden and metrics else None,
+        "season": None,
+        "seasons": _extract_seasons(text),
+        "sale_range": _extract_sale_range(text),
+        "garden": garden,
+        "area": None,
+        "centre": None,
+        "category": None,
+        "tea_type": None,
+        "sub_tea_type": None,
+        "est_blf": None,
+        "lot_status": None,
+        "metrics": metrics,
+        "output_grain": "garden-wise" if garden else None,
+        "output_format": None,
+        "raw_request_text": text,
+    }
+    return known_information
+
+
+def _extract_seasons(text: str) -> list[int]:
+    """Extract year-like season values from text."""
+
+    years = [int(match) for match in re.findall(r"\b(20\d{2}|19\d{2}|21\d{2})\b", text)]
+    return list(dict.fromkeys(years))
+
+
+def _extract_sale_range(text: str) -> str | None:
+    """Extract sale range text from common sale-number phrases."""
+
+    match = re.search(
+        r"\b(?:up\s*to|upto)?\s*sale\s*(?:no\.?|number)?\s*(\d+)\b",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+
+    sale_number = match.group(1)
+    prefix = "up to " if re.search(r"\b(up\s*to|upto)\b", match.group(0), re.IGNORECASE) else ""
+    return f"{prefix}sale {sale_number}".strip()
+
+
+def _extract_garden(text: str) -> str | None:
+    """Extract likely garden name from simple garden-average requests."""
+
+    tokens = re.findall(r"[A-Za-z][A-Za-z0-9_-]*", text)
+    if not tokens:
+        return None
+
+    stop_words = {
+        "give",
+        "show",
+        "need",
+        "report",
+        "garden",
+        "gardens",
+        "average",
+        "averages",
+        "avg",
+        "season",
+        "vs",
+        "upto",
+        "up",
+        "to",
+        "sale",
+        "for",
+        "of",
+        "the",
+        "and",
+    }
+
+    for index, token in enumerate(tokens):
+        if token.lower() in {"average", "averages", "avg"}:
+            for candidate in reversed(tokens[:index]):
+                if candidate.lower() not in stop_words:
+                    return candidate.upper()
+
+    for index, token in enumerate(tokens):
+        if token.lower() == "garden":
+            for candidate in reversed(tokens[:index]):
+                if candidate.lower() not in stop_words:
+                    return candidate.upper()
+
+    return None
+
+
+def _offline_summary(known_information: dict[str, Any]) -> str:
+    """Build a short summary for deterministic fallback output."""
+
+    if known_information.get("garden") and known_information.get("metrics"):
+        return "Garden average comparison report."
+    return "Requirement received for analysis."

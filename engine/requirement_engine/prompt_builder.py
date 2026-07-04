@@ -118,9 +118,40 @@ Act like a Senior Business Analyst first and a SQL generator second.
 Understand the requirement, identify missing information, and decide whether SQL generation is allowed.
 Do not write SQL unless the requirement is complete and SQL generation is explicitly allowed."""
 
-    RESPONSE_INSTRUCTIONS = """Return only valid JSON matching the RequirementAnalysis schema.
-Use these top-level keys where applicable: requirement_id, status, summary, known_information, missing_information, clarification_questions, business_rules, candidate_database_objects, assumptions, risks, sql_generation_allowed, metadata.
-Inside known_information, include fields such as business_objective, report_type, season, seasons, sale_range, garden, area, centre, category, tea_type, sub_tea_type, est_blf, lot_status, metrics, output_grain, output_format, and raw_request_text.
+    RESPONSE_INSTRUCTIONS = """Return only valid JSON. Do not return markdown or explanatory text.
+Use exactly this top-level shape:
+{
+  "summary": "...",
+  "known_information": {
+    "business_objective": null,
+    "report_type": null,
+    "season": null,
+    "seasons": [],
+    "sale_range": null,
+    "garden": null,
+    "area": null,
+    "centre": null,
+    "category": null,
+    "tea_type": null,
+    "sub_tea_type": null,
+    "est_blf": null,
+    "lot_status": null,
+    "metrics": [],
+    "output_grain": null,
+    "output_format": null,
+    "raw_request_text": null
+  },
+  "missing_information": [],
+  "clarification_questions": [],
+  "business_rules": [],
+  "candidate_database_objects": [],
+  "assumptions": [],
+  "risks": [],
+  "sql_generation_allowed": false,
+  "metadata": {"confidence_score": 0.0}
+}
+Use snake_case field names exactly as shown.
+For requests like garden averages, set metrics to ["average price"] and output_grain to "garden-wise".
 If any mandatory information is missing, represent it in JSON clarification_questions instead of generating SQL."""
 
     def build(

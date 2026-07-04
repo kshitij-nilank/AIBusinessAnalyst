@@ -231,6 +231,7 @@ class RequirementValidator:
                 expected_answer_format="Area, centre, or scope.",
                 is_present=lambda info, metadata: self._has_text(info.area)
                 or self._has_text(info.centre)
+                or self._has_text(info.garden)
                 or self._has_metadata_value(metadata, "scope"),
             ),
             MandatoryFieldRule(
