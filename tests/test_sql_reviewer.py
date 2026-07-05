@@ -196,3 +196,25 @@ def test_price_band_sql_review_passes() -> None:
     assert "PriceBand CASE" in result.passed_checks
     assert "GROUP BY PriceBand" in result.passed_checks
     assert "SAFE_DIVIDE average price" in result.passed_checks
+
+
+def test_price_band_review_sql_contains_standard_price_bands() -> None:
+    analysis = _price_band_analysis()
+    generation_result = SQLGenerator().generate(analysis)
+    assert generation_result.sql is not None
+
+    for band in (
+        "Above 300",
+        "280-300",
+        "260-279",
+        "240-259",
+        "225-239",
+        "200-220",
+        "180-200",
+        "160-180",
+        "Below 160",
+    ):
+        assert band in generation_result.sql
+
+    assert "225-250" not in generation_result.sql
+    assert "WHEN Avg_Price >= 225 AND Avg_Price <= 239 THEN 5" in generation_result.sql

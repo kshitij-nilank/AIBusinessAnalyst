@@ -294,7 +294,7 @@ def test_price_band_sql_contains_parcon_standard_bands() -> None:
         "280-300",
         "260-279",
         "240-259",
-        "225-250",
+        "225-239",
         "200-220",
         "180-200",
         "160-180",
