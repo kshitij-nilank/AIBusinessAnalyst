@@ -1,0 +1,2 @@
+"""Executable report generation package."""
+

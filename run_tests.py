@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+import pandas as pd
+
 from engine.common.llm_client import OfflineRequirementLLMClient
 from engine.requirement_engine.knowledge_loader import KnowledgeLoader
 from engine.requirement_engine.models import DecisionStatus
@@ -19,8 +21,8 @@ from engine.requirement_engine.orchestrator import RequirementUnderstandingOrche
 from engine.requirement_engine.prompt_builder import PromptBuilder
 from engine.requirement_engine.response_parser import RequirementResponseParser
 from engine.requirement_engine.validator import RequirementValidator
-from engine.python_generator.python_generator import PythonGenerator
-from engine.python_generator.python_models import PythonGenerationStatus
+from engine.report_execution.models import ReportExecutionStatus
+from engine.report_execution.report_execution_engine import ReportExecutionEngine
 from engine.sql_engine.sql_generator import SQLGenerator
 from engine.sql_engine.sql_models import SQLGenerationStatus
 from engine.sql_planner.sql_planner import SQLPlanner
@@ -38,6 +40,24 @@ class ReportFlowCase:
     name: str
     requirement: str
     expected_report_type: str
+
+
+class SmokeBigQueryExecutor:
+    """Fake BigQuery executor for report flow smoke tests."""
+
+    def execute(self, sql: str) -> pd.DataFrame:
+        """Return a deterministic DataFrame without external services."""
+
+        return pd.DataFrame({"Result": [1], "SQL_Length": [len(sql)]})
+
+
+class SmokeExcelExporter:
+    """Fake Excel exporter for report flow smoke tests."""
+
+    def export(self, dataframe: pd.DataFrame, output_filename: str) -> str:
+        """Return the filename without writing a workbook."""
+
+        return output_filename
 
 
 REPORT_FLOW_CASES = (
@@ -125,7 +145,10 @@ def _run_report_flow_tests() -> tuple[int, int]:
     sql_planner = SQLPlanner()
     sql_generator = SQLGenerator()
     sql_reviewer = SQLReviewer()
-    python_generator = PythonGenerator()
+    report_executor = ReportExecutionEngine(
+        query_executor=SmokeBigQueryExecutor(),
+        exporter=SmokeExcelExporter(),
+    )
 
     total = 0
     failed = 0
@@ -154,13 +177,14 @@ def _run_report_flow_tests() -> tuple[int, int]:
             )
             assert review_result.status == SQLReviewStatus.PASS
 
-            python_result = python_generator.generate(
+            execution_result = report_executor.execute(
                 plan=plan,
                 sql=generation_result.sql,
                 review_result=review_result,
             )
-            assert python_result.status == PythonGenerationStatus.GENERATED
-            assert python_result.script
+            assert execution_result.status == ReportExecutionStatus.SUCCESS
+            assert execution_result.row_count == 1
+            assert execution_result.output_file
         except Exception:
             failed += 1
             print(f"FAIL {label}")

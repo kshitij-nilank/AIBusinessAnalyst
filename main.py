@@ -28,6 +28,8 @@ from engine.python_generator.python_models import (
     PythonGenerationResult,
     PythonGenerationStatus,
 )
+from engine.report_execution.models import ReportExecutionResult, ReportExecutionStatus
+from engine.report_execution.report_execution_engine import ReportExecutionEngine
 from engine.sql_engine.sql_generator import SQLGenerationError, SQLGenerator
 from engine.sql_engine.sql_models import SQLGenerationStatus
 from engine.sql_planner.plan_models import SQLPlan
@@ -44,12 +46,22 @@ class AppConfig:
     """Application-level runtime configuration."""
 
     log_level: str = "INFO"
+    developer_mode: bool = False
 
     @classmethod
     def from_env(cls) -> "AppConfig":
         """Load application configuration from environment variables."""
 
-        return cls(log_level=os.getenv("AIBA_LOG_LEVEL", "INFO"))
+        developer_mode = os.getenv("AIBA_DEVELOPER_MODE", "").casefold() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        return cls(
+            log_level=os.getenv("AIBA_LOG_LEVEL", "INFO"),
+            developer_mode=developer_mode,
+        )
 
 
 class JsonModeLLMClient:
@@ -293,12 +305,22 @@ def display_sql_generation(analysis: RequirementAnalysis) -> None:
         )
         display_sql_review(review_result)
         if plan is not None:
-            python_result = PythonGenerator().generate(
+            print_section("Executing Report", "Starting report execution.")
+            print_section("BigQuery Authentication", "Authenticating with BigQuery.")
+            print_section("Executing Query", "Submitting reviewed SQL to BigQuery.")
+            execution_result = ReportExecutionEngine().execute(
                 plan=plan,
                 sql=result.sql,
                 review_result=review_result,
             )
-            display_python_generation(python_result)
+            display_report_execution(execution_result)
+            if _developer_mode_enabled():
+                python_result = PythonGenerator().generate(
+                    plan=plan,
+                    sql=result.sql,
+                    review_result=review_result,
+                )
+                display_python_generation(python_result)
     elif result.reason:
         print_section("Generated SQL", result.reason)
 
@@ -342,6 +364,36 @@ def display_python_generation(result: PythonGenerationResult) -> None:
         print_section("Generated Python Script", result.script)
     elif result.reason:
         print_section("Python Generation Reason", result.reason)
+
+
+def display_report_execution(result: ReportExecutionResult) -> None:
+    """Display executable report generation result sections."""
+
+    if result.status == ReportExecutionStatus.SUCCESS:
+        print_section("Execution Status", "Execution Completed")
+        print_section("Rows Returned", str(result.row_count or 0))
+        print_section("Excel Generated Successfully", "Yes")
+        print_section("Saved To", result.output_file or "Unknown")
+    elif result.status == ReportExecutionStatus.BLOCKED:
+        print_section("Execution Status", "Execution Blocked")
+        print_section("Reason", result.error_message or "SQL review did not pass.")
+    else:
+        print_section("Execution Status", "Execution Failed")
+        print_section("Reason", result.error_message or "Unknown")
+        if result.error_message and _looks_like_credential_error(result.error_message):
+            print_section(
+                "BigQuery Credential Help",
+                "Run: gcloud auth application-default login\n"
+                "or set: GOOGLE_APPLICATION_CREDENTIALS",
+            )
+    print_section(
+        "Execution Time",
+        f"{result.execution_time:.2f}s"
+        if result.execution_time is not None
+        else "Unknown",
+    )
+    if result.warnings:
+        print_section("Execution Warnings", format_list(result.warnings))
 
 
 def print_section(title: str, content: str) -> None:
@@ -448,6 +500,28 @@ def _truncate_for_log(value: object, limit: int = 2000) -> str:
     if len(text) <= limit:
         return text
     return f"{text[:limit]}...<truncated>"
+
+
+def _developer_mode_enabled() -> bool:
+    """Return whether developer-only generated Python output should be shown."""
+
+    return os.getenv("AIBA_DEVELOPER_MODE", "").casefold() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _looks_like_credential_error(error_message: str) -> bool:
+    """Return whether an execution error is likely a credential problem."""
+
+    normalized = error_message.casefold()
+    return (
+        "credential" in normalized
+        or "authentication" in normalized
+        or "application-default" in normalized
+    )
 
 
 def main() -> int:
