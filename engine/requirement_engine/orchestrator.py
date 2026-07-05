@@ -15,11 +15,14 @@ from __future__ import annotations
 import logging
 from typing import Any, Protocol
 
+from engine.requirement_engine.business_rule_resolver import BusinessRuleResolver
+from engine.requirement_engine.database_resolver import DatabaseResolver
 from engine.requirement_engine.knowledge_loader import (
     KnowledgeCollection,
     KnowledgeSection,
 )
 from engine.requirement_engine.models import RequirementAnalysis
+from engine.requirement_engine.models import BusinessRuleReference, BusinessRuleStatus
 from engine.requirement_engine.prompt_builder import BuiltPrompt
 from engine.requirement_engine.response_parser import ParsedRequirementAnalysis
 
@@ -110,6 +113,8 @@ class RequirementUnderstandingOrchestrator:
         llm_client: LLMClientProtocol,
         response_parser: ResponseParserProtocol,
         requirement_validator: RequirementValidatorProtocol,
+        business_rule_resolver: BusinessRuleResolver | None = None,
+        database_resolver: DatabaseResolver | None = None,
     ) -> None:
         """Create an orchestrator with fully injected dependencies.
 
@@ -126,6 +131,8 @@ class RequirementUnderstandingOrchestrator:
         self.llm_client = llm_client
         self.response_parser = response_parser
         self.requirement_validator = requirement_validator
+        self.business_rule_resolver = business_rule_resolver or BusinessRuleResolver()
+        self.database_resolver = database_resolver or DatabaseResolver()
 
     def analyze(self, requirement: str) -> RequirementAnalysis:
         """Analyze a plain-text business requirement.
@@ -161,7 +168,8 @@ class RequirementUnderstandingOrchestrator:
             prompt = self._build_prompt(requirement=requirement, knowledge=knowledge)
             raw_response = self._call_llm(prompt=prompt)
             parsed_analysis = self._parse_response(raw_response)
-            final_analysis = self._validate_analysis(parsed_analysis)
+            validated_analysis = self._validate_analysis(parsed_analysis)
+            final_analysis = self._resolve_context(validated_analysis)
         except RequirementOrchestratorError:
             raise
         except Exception as exc:
@@ -343,6 +351,38 @@ class RequirementUnderstandingOrchestrator:
             },
         )
         return validated
+
+    def _resolve_context(self, analysis: RequirementAnalysis) -> RequirementAnalysis:
+        """Resolve business rules and database objects for validated analysis."""
+
+        rule_resolution = self.business_rule_resolver.resolve(analysis)
+        database_resolution = self.database_resolver.resolve(analysis)
+        metadata = dict(analysis.metadata)
+        metadata["missing_rule_dependencies"] = (
+            rule_resolution.missing_rule_dependencies
+        )
+        metadata["missing_database_dependencies"] = (
+            database_resolution.missing_dependencies
+        )
+        return analysis.model_copy(
+            update={
+                "business_rules": [
+                    BusinessRuleReference(
+                        rule_id=rule.rule_id,
+                        name=rule.name,
+                        file_path=rule.file_path,
+                        status=BusinessRuleStatus.DOCUMENTED,
+                        relevance="; ".join(rule.applies_because),
+                    )
+                    for rule in rule_resolution.applicable_rules
+                ],
+                "candidate_database_objects": (
+                    database_resolution.candidate_database_objects
+                ),
+                "metadata": metadata,
+            },
+            deep=True,
+        )
 
     @staticmethod
     def _is_empty_response(raw_response: Any) -> bool:

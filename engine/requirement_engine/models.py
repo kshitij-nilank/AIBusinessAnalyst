@@ -318,6 +318,52 @@ class CandidateDatabaseObject(BaseModel):
     )
 
 
+class ResolvedBusinessRule(BaseModel):
+    """Business rule selected as applicable to a requirement."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        validate_assignment=True,
+        str_strip_whitespace=True,
+    )
+
+    rule_id: str = Field(description="Rule identifier, such as BR-006.")
+    name: str = Field(description="Human-readable business rule name.")
+    file_path: str = Field(description="Source markdown file path.")
+    keywords: list[str] = Field(default_factory=list)
+    entities: list[str] = Field(default_factory=list)
+    report_types: list[str] = Field(default_factory=list)
+    metrics: list[str] = Field(default_factory=list)
+    applies_because: list[str] = Field(default_factory=list)
+    missing_dependencies: list[str] = Field(default_factory=list)
+
+
+class BusinessRuleResolution(BaseModel):
+    """Result of resolving business rules for a requirement."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        validate_assignment=True,
+        str_strip_whitespace=True,
+    )
+
+    applicable_rules: list[ResolvedBusinessRule] = Field(default_factory=list)
+    missing_rule_dependencies: list[str] = Field(default_factory=list)
+
+
+class DatabaseResolution(BaseModel):
+    """Result of mapping a requirement to likely database objects."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        validate_assignment=True,
+        str_strip_whitespace=True,
+    )
+
+    candidate_database_objects: list[CandidateDatabaseObject] = Field(default_factory=list)
+    missing_dependencies: list[str] = Field(default_factory=list)
+
+
 class RequirementAnalysis(BaseModel):
     """Complete structured result of business requirement analysis.
 
