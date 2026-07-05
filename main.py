@@ -25,6 +25,8 @@ from engine.requirement_engine.response_parser import RequirementResponseParser
 from engine.requirement_engine.validator import RequirementValidator
 from engine.sql_engine.sql_generator import SQLGenerationError, SQLGenerator
 from engine.sql_engine.sql_models import SQLGenerationStatus
+from engine.sql_planner.plan_models import SQLPlan
+from engine.sql_planner.sql_planner import SQLPlanner, SQLPlanningError
 from engine.sql_review_engine.review_models import SQLReviewResult
 from engine.sql_review_engine.sql_reviewer import SQLReviewer
 
@@ -264,6 +266,13 @@ def display_sql_generation(analysis: RequirementAnalysis) -> None:
         return
 
     try:
+        plan = SQLPlanner().plan(analysis)
+    except SQLPlanningError as exc:
+        print_section("SQL Plan", str(exc))
+    else:
+        display_sql_plan(plan)
+
+    try:
         result = SQLGenerator().generate(analysis)
     except SQLGenerationError as exc:
         print_section("Generated SQL", str(exc))
@@ -279,6 +288,25 @@ def display_sql_generation(analysis: RequirementAnalysis) -> None:
         display_sql_review(review_result)
     elif result.reason:
         print_section("Generated SQL", result.reason)
+
+
+def display_sql_plan(plan: SQLPlan) -> None:
+    """Display a semantic SQL plan before generated SQL."""
+
+    rows = {
+        "Report Type": plan.report_type,
+        "Source Table": plan.source_table,
+        "Filters": ", ".join(plan.filters),
+        "Joins": ", ".join(plan.joins) if plan.joins else "None",
+        "Group By": ", ".join(plan.group_by),
+        "Aggregations": ", ".join(plan.aggregations),
+        "Calculations": ", ".join(plan.calculations),
+        "Ranking": ", ".join(plan.ranking) if plan.ranking else "None",
+        "Order By": ", ".join(plan.order_by),
+        "Business Rules": ", ".join(plan.applied_business_rules),
+        "Warnings": ", ".join(plan.warnings) if plan.warnings else "None",
+    }
+    print_section("SQL Plan", format_key_value_rows(rows))
 
 
 def display_sql_review(review_result: SQLReviewResult) -> None:
