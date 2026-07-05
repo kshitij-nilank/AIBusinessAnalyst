@@ -25,6 +25,8 @@ from engine.requirement_engine.response_parser import RequirementResponseParser
 from engine.requirement_engine.validator import RequirementValidator
 from engine.sql_engine.sql_generator import SQLGenerationError, SQLGenerator
 from engine.sql_engine.sql_models import SQLGenerationStatus
+from engine.sql_review_engine.review_models import SQLReviewResult
+from engine.sql_review_engine.sql_reviewer import SQLReviewer
 
 
 logger = logging.getLogger(__name__)
@@ -269,8 +271,24 @@ def display_sql_generation(analysis: RequirementAnalysis) -> None:
 
     if result.status == SQLGenerationStatus.GENERATED and result.sql:
         print_section("Generated SQL", result.sql)
+        review_result = SQLReviewer().review(
+            sql=result.sql,
+            analysis=analysis,
+            generation_result=result,
+        )
+        display_sql_review(review_result)
     elif result.reason:
         print_section("Generated SQL", result.reason)
+
+
+def display_sql_review(review_result: SQLReviewResult) -> None:
+    """Display SQL review result sections."""
+
+    print_section("SQL Review Status", review_result.status.value)
+    print_section("SQL Review Summary", review_result.review_summary)
+    print_section("Passed Checks", format_list(review_result.passed_checks))
+    print_section("Failed Checks", format_list(review_result.failed_checks))
+    print_section("Warnings", format_list(review_result.warnings))
 
 
 def print_section(title: str, content: str) -> None:
@@ -360,6 +378,14 @@ def format_key_value_rows(rows: dict[str, object | None]) -> str:
         f"- {key}: {value if value not in (None, '') else 'Unknown'}"
         for key, value in rows.items()
     )
+
+
+def format_list(items: list[str]) -> str:
+    """Format a list for terminal output."""
+
+    if not items:
+        return "None"
+    return "\n".join(f"- {item}" for item in items)
 
 
 def _truncate_for_log(value: object, limit: int = 2000) -> str:
