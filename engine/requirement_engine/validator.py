@@ -232,6 +232,7 @@ class RequirementValidator:
                 is_present=lambda info, metadata: self._has_text(info.area)
                 or self._has_text(info.centre)
                 or self._has_text(info.garden)
+                or self._has_text(info.buyer)
                 or self._has_metadata_value(metadata, "scope"),
             ),
             MandatoryFieldRule(

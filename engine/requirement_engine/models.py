@@ -113,6 +113,11 @@ class KnownInformation(BaseModel):
         min_length=1,
         description="Requested garden or mark name, if the report is garden-specific.",
     )
+    buyer: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Requested buyer or buyer group, if the report is buyer-specific.",
+    )
     area: str | None = Field(
         default=None,
         min_length=1,

@@ -266,6 +266,7 @@ def format_known_information(analysis: RequirementAnalysis) -> str:
         "Tea Type": info.tea_type,
         "Sub Tea Type": info.sub_tea_type,
         "Garden": info.garden,
+        "Buyer": info.buyer,
         "EST/BLF": info.est_blf,
         "Lot Status": info.lot_status,
         "Metrics": ", ".join(info.metrics) if info.metrics else None,
