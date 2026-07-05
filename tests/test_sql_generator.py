@@ -5,6 +5,7 @@ from engine.requirement_engine.models import (
 )
 from engine.sql_engine.sql_generator import SQLGenerationError, SQLGenerator
 from engine.sql_engine.sql_models import SQLGenerationStatus
+from engine.sql_planner.sql_planner import SQLPlanner
 
 
 def _garden_ranking_analysis(
@@ -115,6 +116,33 @@ def test_sql_generated_for_complete_garden_ranking_report() -> None:
         "data-warehousing-prod.EasyReports.SaleTransactionView"
     ]
     assert result.applied_business_rules
+
+
+def test_sql_generator_accepts_sql_plan_as_primary_input() -> None:
+    plan = SQLPlanner().plan(_garden_ranking_analysis())
+
+    result = SQLGenerator().generate(plan)
+
+    assert result.status == SQLGenerationStatus.GENERATED
+    assert result.report_type == "Garden Ranking Report"
+    assert "SaleAlias BETWEEN 14 AND 26" in result.sql
+
+
+def test_sql_generator_generates_all_supported_reports_from_sql_plan() -> None:
+    analyses = [
+        _garden_ranking_analysis(),
+        _sale_wise_average_price_analysis(),
+        _buyer_purchase_analysis(),
+        _price_band_analysis(),
+        _comparison_analysis(),
+    ]
+
+    for analysis in analyses:
+        plan = SQLPlanner().plan(analysis)
+        result = SQLGenerator().generate(plan)
+        assert result.status == SQLGenerationStatus.GENERATED
+        assert result.report_type == analysis.known_information.report_type
+        assert result.sql
 
 
 def test_sql_blocked_if_decision_status_is_not_allowed() -> None:

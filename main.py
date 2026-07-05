@@ -269,11 +269,12 @@ def display_sql_generation(analysis: RequirementAnalysis) -> None:
         plan = SQLPlanner().plan(analysis)
     except SQLPlanningError as exc:
         print_section("SQL Plan", str(exc))
+        plan = None
     else:
         display_sql_plan(plan)
 
     try:
-        result = SQLGenerator().generate(analysis)
+        result = SQLGenerator().generate(plan or analysis)
     except SQLGenerationError as exc:
         print_section("Generated SQL", str(exc))
         return

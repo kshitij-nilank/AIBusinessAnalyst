@@ -9,6 +9,8 @@ from pathlib import Path
 from engine.requirement_engine.models import DecisionStatus
 from engine.requirement_engine.models import RequirementAnalysis
 from engine.sql_engine.sql_models import SQLGenerationResult, SQLGenerationStatus
+from engine.sql_planner.plan_models import SQLPlan
+from engine.sql_planner.sql_planner import SQLPlanner, SQLPlanningError
 
 
 class SQLGenerationError(ValueError):
@@ -38,8 +40,13 @@ class SQLGenerator:
         "TCPL": "TATA CONSUMER PRODUCTS LTD.",
     }
 
-    def generate(self, analysis: RequirementAnalysis) -> SQLGenerationResult:
-        """Generate SQL for a supported, allowed requirement analysis."""
+    def generate(self, source: SQLPlan | RequirementAnalysis) -> SQLGenerationResult:
+        """Generate SQL from a SQLPlan, with temporary RequirementAnalysis support."""
+
+        if isinstance(source, SQLPlan):
+            return self.generate_from_plan(source)
+
+        analysis = source
 
         if analysis.decision_status != DecisionStatus.SQL_ALLOWED:
             return SQLGenerationResult(
@@ -48,17 +55,26 @@ class SQLGenerator:
                 reason="RequirementAnalysis decision_status is not SQL_ALLOWED.",
             )
 
-        report_type = analysis.known_information.report_type
+        try:
+            plan = SQLPlanner().plan(analysis)
+        except SQLPlanningError as exc:
+            raise SQLGenerationError(str(exc)) from exc
+        return self.generate_from_plan(plan)
+
+    def generate_from_plan(self, plan: SQLPlan) -> SQLGenerationResult:
+        """Generate SQL from a semantic SQLPlan."""
+
+        report_type = plan.report_type
         if report_type == self.GARDEN_RANKING_REPORT:
-            return self._generate_garden_ranking(analysis)
+            return self._generate_garden_ranking(plan)
         if report_type == self.SALE_WISE_AVERAGE_PRICE_REPORT:
-            return self._generate_sale_wise_average_price(analysis)
+            return self._generate_sale_wise_average_price(plan)
         if report_type == self.BUYER_PURCHASE_REPORT:
-            return self._generate_buyer_purchase(analysis)
+            return self._generate_buyer_purchase(plan)
         if report_type == self.PRICE_BAND_REPORT:
-            return self._generate_price_band(analysis)
+            return self._generate_price_band(plan)
         if report_type == self.COMPARISON_REPORT:
-            return self._generate_comparison(analysis)
+            return self._generate_comparison(plan)
 
         return SQLGenerationResult(
             status=SQLGenerationStatus.BLOCKED,
@@ -68,11 +84,11 @@ class SQLGenerator:
 
     def _generate_garden_ranking(
         self,
-        analysis: RequirementAnalysis,
+        plan: SQLPlan,
     ) -> SQLGenerationResult:
         """Generate Garden Ranking SQL."""
 
-        context = self._build_garden_ranking_context(analysis)
+        context = self._garden_ranking_context_from_plan(plan)
         sql = self._render_template("garden_ranking.sql.j2", context)
 
         return SQLGenerationResult(
@@ -82,22 +98,16 @@ class SQLGenerator:
             reason="Garden Ranking SQL generated.",
             warnings=[],
             source_tables=[self.SOURCE_TABLE],
-            applied_business_rules=[
-                "BR-001 FYear",
-                "BR-002 SaleAlias",
-                "BR-003 AreaAlias",
-                "BR-009 EstBlf",
-                "BR-017 GardenRanking",
-            ],
+            applied_business_rules=plan.applied_business_rules,
         )
 
     def _generate_buyer_purchase(
         self,
-        analysis: RequirementAnalysis,
+        plan: SQLPlan,
     ) -> SQLGenerationResult:
         """Generate Buyer Purchase SQL."""
 
-        context = self._build_buyer_purchase_context(analysis)
+        context = self._buyer_purchase_context_from_plan(plan)
         sql = self._render_template("buyer_purchase.sql.j2", context)
 
         return SQLGenerationResult(
@@ -107,20 +117,16 @@ class SQLGenerator:
             reason="Buyer Purchase SQL generated.",
             warnings=[],
             source_tables=[self.SOURCE_TABLE, self.BUYER_GROUP_TABLE],
-            applied_business_rules=[
-                "BR-001 FYear",
-                "BR-002 SaleAlias",
-                "BR-015 BuyerGroup",
-            ],
+            applied_business_rules=plan.applied_business_rules,
         )
 
     def _generate_sale_wise_average_price(
         self,
-        analysis: RequirementAnalysis,
+        plan: SQLPlan,
     ) -> SQLGenerationResult:
         """Generate Sale Wise Average Price SQL."""
 
-        context = self._build_sale_wise_average_price_context(analysis)
+        context = self._sale_wise_average_price_context_from_plan(plan)
         sql = self._render_template("sale_wise_average_price.sql.j2", context)
 
         return SQLGenerationResult(
@@ -130,21 +136,16 @@ class SQLGenerator:
             reason="Sale Wise Average Price SQL generated.",
             warnings=[],
             source_tables=[self.SOURCE_TABLE],
-            applied_business_rules=[
-                "BR-001 FYear",
-                "BR-002 SaleAlias",
-                "BR-003 AreaAlias",
-                "BR-006 AveragePrice",
-            ],
+            applied_business_rules=plan.applied_business_rules,
         )
 
     def _generate_price_band(
         self,
-        analysis: RequirementAnalysis,
+        plan: SQLPlan,
     ) -> SQLGenerationResult:
         """Generate Price Band SQL."""
 
-        context = self._build_price_band_context(analysis)
+        context = self._price_band_context_from_plan(plan)
         sql = self._render_template("price_band.sql.j2", context)
 
         return SQLGenerationResult(
@@ -154,21 +155,16 @@ class SQLGenerator:
             reason="Price Band SQL generated.",
             warnings=[],
             source_tables=[self.SOURCE_TABLE],
-            applied_business_rules=[
-                "BR-001 FYear",
-                "BR-002 SaleAlias",
-                "BR-003 AreaAlias",
-                "BR-007 PriceBands",
-            ],
+            applied_business_rules=plan.applied_business_rules,
         )
 
     def _generate_comparison(
         self,
-        analysis: RequirementAnalysis,
+        plan: SQLPlan,
     ) -> SQLGenerationResult:
         """Generate buyer-wise comparison SQL."""
 
-        context = self._build_comparison_context(analysis)
+        context = self._comparison_context_from_plan(plan)
         sql = self._render_template("comparison_buyer_wise.sql.j2", context)
 
         return SQLGenerationResult(
@@ -178,13 +174,69 @@ class SQLGenerator:
             reason="Comparison SQL generated.",
             warnings=[],
             source_tables=[self.SOURCE_TABLE, self.BUYER_GROUP_TABLE],
-            applied_business_rules=[
-                "BR-001 FYear",
-                "BR-002 SaleAlias",
-                "BR-015 BuyerGroup",
-                "BR-027 HistoricalComparison",
-            ],
+            applied_business_rules=plan.applied_business_rules,
         )
+
+    def _garden_ranking_context_from_plan(self, plan: SQLPlan) -> dict[str, str | int]:
+        """Build Garden Ranking template context from SQLPlan."""
+
+        return {
+            "source_table": plan.source_table,
+            "season": self._required_filter_value(plan, "FYear"),
+            "sale_filter": self._required_sale_filter(plan),
+            "area_alias": self._required_filter_value(plan, "AreaAlias"),
+            "category": self._required_filter_value(plan, "Category"),
+            "est_blf": self._required_filter_value(plan, "EstBlf"),
+        }
+
+    def _sale_wise_average_price_context_from_plan(
+        self,
+        plan: SQLPlan,
+    ) -> dict[str, str | int]:
+        """Build Sale Wise Average Price template context from SQLPlan."""
+
+        return {
+            "source_table": plan.source_table,
+            "season": self._required_filter_value(plan, "FYear"),
+            "sale_filter": self._required_sale_filter(plan),
+            "area_alias": self._required_filter_value(plan, "AreaAlias"),
+            "category": self._required_filter_value(plan, "Category"),
+        }
+
+    def _buyer_purchase_context_from_plan(self, plan: SQLPlan) -> dict[str, str | int]:
+        """Build Buyer Purchase template context from SQLPlan."""
+
+        return {
+            "source_table": plan.source_table,
+            "buyer_group_table": self.BUYER_GROUP_TABLE,
+            "season": self._required_filter_value(plan, "FYear"),
+            "sale_filter": self._required_sale_filter(plan),
+            "category": self._required_filter_value(plan, "Category"),
+            "buyer_group": self._required_filter_value(plan, "BuyerMDM"),
+        }
+
+    def _price_band_context_from_plan(self, plan: SQLPlan) -> dict[str, str | int]:
+        """Build Price Band template context from SQLPlan."""
+
+        return {
+            "source_table": plan.source_table,
+            "season": self._required_filter_value(plan, "FYear"),
+            "sale_filter": self._required_sale_filter(plan),
+            "area_alias": self._required_filter_value(plan, "AreaAlias"),
+            "category": self._required_filter_value(plan, "Category"),
+        }
+
+    def _comparison_context_from_plan(self, plan: SQLPlan) -> dict[str, str | int]:
+        """Build Comparison template context from SQLPlan."""
+
+        return {
+            "source_table": plan.source_table,
+            "buyer_group_table": self.BUYER_GROUP_TABLE,
+            "season_list": self._required_fyear_in(plan),
+            "sale_filter": self._required_sale_filter(plan),
+            "category": self._required_filter_value(plan, "Category"),
+            "buyer_group": self._required_filter_value(plan, "BuyerMDM"),
+        }
 
     def _build_garden_ranking_context(
         self,
@@ -415,6 +467,43 @@ class SQLGenerator:
         if sale_range.start == sale_range.end:
             return f"SaleAlias = {sale_range.start}"
         return f"SaleAlias BETWEEN {sale_range.start} AND {sale_range.end}"
+
+    @staticmethod
+    def _required_filter_value(plan: SQLPlan, field_name: str) -> str:
+        """Return a semantic equality filter value from a SQLPlan."""
+
+        pattern = re.compile(rf"^{re.escape(field_name)}\s*=\s*(.+)$", re.IGNORECASE)
+        for filter_text in plan.filters:
+            match = pattern.match(filter_text)
+            if match:
+                return match.group(1).strip()
+        raise SQLGenerationError(
+            f"Cannot generate {plan.report_type} SQL. Missing plan filter: {field_name}"
+        )
+
+    @staticmethod
+    def _required_sale_filter(plan: SQLPlan) -> str:
+        """Return the SaleAlias predicate from a SQLPlan."""
+
+        for filter_text in plan.filters:
+            if re.match(r"^SaleAlias\s+(BETWEEN|=)", filter_text, re.IGNORECASE):
+                return filter_text
+        raise SQLGenerationError(
+            f"Cannot generate {plan.report_type} SQL. Missing plan filter: SaleAlias"
+        )
+
+    @staticmethod
+    def _required_fyear_in(plan: SQLPlan) -> str:
+        """Return the comma-separated FYear IN values from a SQLPlan."""
+
+        pattern = re.compile(r"^FYear\s+IN\s*\(([^)]*)\)$", re.IGNORECASE)
+        for filter_text in plan.filters:
+            match = pattern.match(filter_text)
+            if match:
+                return match.group(1).strip()
+        raise SQLGenerationError(
+            f"Cannot generate {plan.report_type} SQL. Missing plan filter: FYear IN"
+        )
 
     @classmethod
     def _buyer_group_name(cls, buyer: str | None) -> str | None:
