@@ -28,7 +28,13 @@ class SQLGenerator:
 
     GARDEN_RANKING_REPORT = "Garden Ranking Report"
     SALE_WISE_AVERAGE_PRICE_REPORT = "Sale Wise Average Price Report"
+    BUYER_PURCHASE_REPORT = "Buyer Purchase Report"
     SOURCE_TABLE = "data-warehousing-prod.EasyReports.SaleTransactionView"
+    BUYER_GROUP_TABLE = "data-warehousing-prod.EasyReports.Parcon-BuyerGroup"
+    BUYER_MAPPING = {
+        "HUL": "HINDUSTHAN UNILEVER LIMITED",
+        "TCPL": "TATA CONSUMER PRODUCTS LTD.",
+    }
 
     def generate(self, analysis: RequirementAnalysis) -> SQLGenerationResult:
         """Generate SQL for a supported, allowed requirement analysis."""
@@ -45,6 +51,8 @@ class SQLGenerator:
             return self._generate_garden_ranking(analysis)
         if report_type == self.SALE_WISE_AVERAGE_PRICE_REPORT:
             return self._generate_sale_wise_average_price(analysis)
+        if report_type == self.BUYER_PURCHASE_REPORT:
+            return self._generate_buyer_purchase(analysis)
 
         return SQLGenerationResult(
             status=SQLGenerationStatus.BLOCKED,
@@ -74,6 +82,29 @@ class SQLGenerator:
                 "BR-003 AreaAlias",
                 "BR-009 EstBlf",
                 "BR-017 GardenRanking",
+            ],
+        )
+
+    def _generate_buyer_purchase(
+        self,
+        analysis: RequirementAnalysis,
+    ) -> SQLGenerationResult:
+        """Generate Buyer Purchase SQL."""
+
+        context = self._build_buyer_purchase_context(analysis)
+        sql = self._render_template("buyer_purchase.sql.j2", context)
+
+        return SQLGenerationResult(
+            status=SQLGenerationStatus.GENERATED,
+            sql=sql,
+            report_type=self.BUYER_PURCHASE_REPORT,
+            reason="Buyer Purchase SQL generated.",
+            warnings=[],
+            source_tables=[self.SOURCE_TABLE, self.BUYER_GROUP_TABLE],
+            applied_business_rules=[
+                "BR-001 FYear",
+                "BR-002 SaleAlias",
+                "BR-015 BuyerGroup",
             ],
         )
 
@@ -150,6 +181,50 @@ class SQLGenerator:
 
         return context
 
+    def _build_buyer_purchase_context(
+        self,
+        analysis: RequirementAnalysis,
+    ) -> dict[str, str | int]:
+        """Validate Buyer Purchase inputs and build template context."""
+
+        known = analysis.known_information
+        season = known.season or (known.seasons[0] if known.seasons else None)
+        sale_range = self._parse_sale_range(known.sale_range)
+        buyer_group = self._buyer_group_name(known.buyer)
+
+        required_values = {
+            "season": season,
+            "sale_range": known.sale_range,
+            "buyer": buyer_group,
+            "category": known.category,
+            "output_grain": known.output_grain,
+        }
+        missing = [name for name, value in required_values.items() if not value]
+        if missing:
+            raise SQLGenerationError(
+                "Cannot generate Buyer Purchase SQL. Missing required field(s): "
+                + ", ".join(missing)
+            )
+
+        metrics = {metric.casefold() for metric in known.metrics}
+        if not {"quantity", "value"}.issubset(metrics):
+            raise SQLGenerationError(
+                "Cannot generate Buyer Purchase SQL. Required metrics are quantity and value."
+            )
+        if known.output_grain != "buyer-wise":
+            raise SQLGenerationError(
+                "Cannot generate Buyer Purchase SQL. Grouping must be buyer-wise."
+            )
+
+        return {
+            "source_table": self.SOURCE_TABLE,
+            "buyer_group_table": self.BUYER_GROUP_TABLE,
+            "season": int(season),
+            "sale_filter": self._sale_filter(sale_range),
+            "category": known.category,
+            "buyer_group": buyer_group,
+        }
+
     def _base_context(
         self,
         analysis: RequirementAnalysis,
@@ -221,6 +296,19 @@ class SQLGenerator:
         if sale_range.start == sale_range.end:
             return f"SaleAlias = {sale_range.start}"
         return f"SaleAlias BETWEEN {sale_range.start} AND {sale_range.end}"
+
+    @classmethod
+    def _buyer_group_name(cls, buyer: str | None) -> str | None:
+        """Return canonical buyer group name for supported buyer aliases."""
+
+        if not buyer:
+            return None
+        normalized = buyer.strip().upper()
+        if normalized in cls.BUYER_MAPPING:
+            return cls.BUYER_MAPPING[normalized]
+        if normalized in cls.BUYER_MAPPING.values():
+            return normalized
+        return buyer.strip()
 
     def _render_template(
         self,

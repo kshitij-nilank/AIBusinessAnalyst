@@ -49,6 +49,24 @@ def _sale_wise_average_price_analysis() -> RequirementAnalysis:
     )
 
 
+def _buyer_purchase_analysis() -> RequirementAnalysis:
+    return RequirementAnalysis(
+        summary="Buyer Purchase Report",
+        known_information=KnownInformation(
+            report_type="Buyer Purchase Report",
+            season=2026,
+            sale_range="sale 14 to 26",
+            buyer="HUL",
+            category="CTC",
+            metrics=["quantity", "value"],
+            output_grain="buyer-wise",
+        ),
+        sql_generation_allowed=True,
+        decision_status=DecisionStatus.SQL_ALLOWED,
+        metadata={"confidence_score": 0.85},
+    )
+
+
 def test_sql_generated_for_complete_garden_ranking_report() -> None:
     result = SQLGenerator().generate(_garden_ranking_analysis())
 
@@ -188,3 +206,42 @@ def test_garden_ranking_report_still_generates() -> None:
     assert result.status == SQLGenerationStatus.GENERATED
     assert result.report_type == "Garden Ranking Report"
     assert "DENSE_RANK()" in result.sql
+
+
+def test_buyer_purchase_sql_generated_for_hul_ctc_season_2026_sale_14_to_26() -> None:
+    result = SQLGenerator().generate(_buyer_purchase_analysis())
+
+    assert result.status == SQLGenerationStatus.GENERATED
+    assert result.report_type == "Buyer Purchase Report"
+    assert result.sql is not None
+    assert "HINDUSTHAN UNILEVER LIMITED" in result.sql
+    assert "BuyerMDM" in result.sql
+    assert "sales.Buyer," not in result.sql
+    assert "ON sales.Buyer = buyer_group.Buyer" not in result.sql
+    assert "buyer_group.BuyerGroup" not in result.sql
+
+
+def test_buyer_purchase_sql_uses_parcon_buyer_group() -> None:
+    result = SQLGenerator().generate(_buyer_purchase_analysis())
+
+    assert "data-warehousing-prod.EasyReports.Parcon-BuyerGroup" in result.sql
+    assert "sales.BuyerMDM = buyer_group.BuyerMDM" in result.sql
+
+
+def test_buyer_purchase_sql_contains_sale_alias_between_14_and_26() -> None:
+    result = SQLGenerator().generate(_buyer_purchase_analysis())
+
+    assert "SaleAlias BETWEEN 14 AND 26" in result.sql
+
+
+def test_buyer_purchase_sql_contains_category_ctc() -> None:
+    result = SQLGenerator().generate(_buyer_purchase_analysis())
+
+    assert "Category = 'CTC'" in result.sql
+
+
+def test_sale_wise_average_price_existing_test_still_passes() -> None:
+    result = SQLGenerator().generate(_sale_wise_average_price_analysis())
+
+    assert result.status == SQLGenerationStatus.GENERATED
+    assert "SaleAlias = 20" in result.sql
