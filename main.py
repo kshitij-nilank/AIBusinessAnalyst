@@ -23,6 +23,8 @@ from engine.requirement_engine.orchestrator import (
 from engine.requirement_engine.prompt_builder import PromptBuilder
 from engine.requirement_engine.response_parser import RequirementResponseParser
 from engine.requirement_engine.validator import RequirementValidator
+from engine.sql_engine.sql_generator import SQLGenerationError, SQLGenerator
+from engine.sql_engine.sql_models import SQLGenerationStatus
 
 
 logger = logging.getLogger(__name__)
@@ -244,12 +246,31 @@ def display_analysis(analysis: RequirementAnalysis) -> None:
         "Next Action",
         analysis.next_action or "Unknown",
     )
+    display_sql_generation(analysis)
     if analysis.metadata.get("llm_mode") == "offline_fallback":
         print_section(
             "Note",
             "Offline fallback used because LLM API is unavailable.",
         )
     print("=" * 50)
+
+
+def display_sql_generation(analysis: RequirementAnalysis) -> None:
+    """Display generated SQL or a clear unsupported/blocked message."""
+
+    if not analysis.sql_generation_allowed:
+        return
+
+    try:
+        result = SQLGenerator().generate(analysis)
+    except SQLGenerationError as exc:
+        print_section("Generated SQL", str(exc))
+        return
+
+    if result.status == SQLGenerationStatus.GENERATED and result.sql:
+        print_section("Generated SQL", result.sql)
+    elif result.reason:
+        print_section("Generated SQL", result.reason)
 
 
 def print_section(title: str, content: str) -> None:
