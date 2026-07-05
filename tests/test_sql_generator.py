@@ -31,6 +31,24 @@ def _garden_ranking_analysis(
     )
 
 
+def _sale_wise_average_price_analysis() -> RequirementAnalysis:
+    return RequirementAnalysis(
+        summary="Sale Wise Average Price Report",
+        known_information=KnownInformation(
+            report_type="Sale Wise Average Price Report",
+            season=2026,
+            sale_range="sale 20",
+            area="AS",
+            category="ORTHODOX",
+            metrics=["average price"],
+            output_grain="sale-wise",
+        ),
+        sql_generation_allowed=True,
+        decision_status=DecisionStatus.SQL_ALLOWED,
+        metadata={"confidence_score": 0.85},
+    )
+
+
 def test_sql_generated_for_complete_garden_ranking_report() -> None:
     result = SQLGenerator().generate(_garden_ranking_analysis())
 
@@ -121,3 +139,52 @@ def test_sale_20_becomes_sale_alias_equals_20() -> None:
 
     assert "SaleAlias = 20" in result.sql
     assert "SaleAlias BETWEEN" not in result.sql
+
+
+def test_sale_wise_average_price_sql_is_generated() -> None:
+    result = SQLGenerator().generate(_sale_wise_average_price_analysis())
+
+    assert result.status == SQLGenerationStatus.GENERATED
+    assert result.report_type == "Sale Wise Average Price Report"
+    assert result.sql is not None
+    assert "GROUP BY SaleAlias" in result.sql
+    assert "ORDER BY SaleAlias" in result.sql
+
+
+def test_sale_wise_average_price_sql_contains_fyear_logic() -> None:
+    result = SQLGenerator().generate(_sale_wise_average_price_analysis())
+
+    assert "CAST(SUBSTRING(FinYear, 1, 4) AS INT64) = Season" in result.sql
+    assert "WHERE FYear = 2026" in result.sql
+
+
+def test_sale_wise_average_price_sql_contains_sale_alias_equals_20() -> None:
+    result = SQLGenerator().generate(_sale_wise_average_price_analysis())
+
+    assert "SaleAlias = 20" in result.sql
+
+
+def test_sale_wise_average_price_sql_contains_area_alias_as() -> None:
+    result = SQLGenerator().generate(_sale_wise_average_price_analysis())
+
+    assert "AreaAlias = 'AS'" in result.sql
+
+
+def test_sale_wise_average_price_sql_contains_category_orthodox() -> None:
+    result = SQLGenerator().generate(_sale_wise_average_price_analysis())
+
+    assert "Category = 'ORTHODOX'" in result.sql
+
+
+def test_sale_wise_average_price_sql_contains_safe_divide() -> None:
+    result = SQLGenerator().generate(_sale_wise_average_price_analysis())
+
+    assert "SAFE_DIVIDE(SUM(Value), SUM(TotalWeight)) AS Avg_Price" in result.sql
+
+
+def test_garden_ranking_report_still_generates() -> None:
+    result = SQLGenerator().generate(_garden_ranking_analysis())
+
+    assert result.status == SQLGenerationStatus.GENERATED
+    assert result.report_type == "Garden Ranking Report"
+    assert "DENSE_RANK()" in result.sql

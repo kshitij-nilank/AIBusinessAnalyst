@@ -24,7 +24,8 @@ class SQLCheck:
 class SQLReviewer:
     """Review generated SQL text without executing it."""
 
-    SUPPORTED_REPORT_TYPE = "Garden Ranking Report"
+    GARDEN_RANKING_REPORT = "Garden Ranking Report"
+    SALE_WISE_AVERAGE_PRICE_REPORT = "Sale Wise Average Price Report"
 
     def review(
         self,
@@ -43,14 +44,21 @@ class SQLReviewer:
                 confidence=0.0,
             )
 
-        checks = self._garden_ranking_checks()
+        checks = self._checks_for_report(generation_result.report_type)
         passed: list[str] = []
         failed: list[str] = []
         issues: list[str] = []
         warnings: list[str] = []
 
-        if generation_result.report_type != self.SUPPORTED_REPORT_TYPE:
-            warnings.append("SQL review is only implemented for Garden Ranking Report.")
+        if not checks:
+            return SQLReviewResult(
+                status=SQLReviewStatus.WARNING,
+                warnings=[
+                    "SQL review is not implemented for this report type.",
+                ],
+                review_summary="SQL review could not apply report-specific checks.",
+                confidence=0.0,
+            )
 
         for check in checks:
             if check.predicate(sql, analysis, generation_result):
@@ -73,6 +81,15 @@ class SQLReviewer:
             review_summary=self._summary(status, issues, warnings),
             confidence=confidence,
         )
+
+    def _checks_for_report(self, report_type: str | None) -> tuple[SQLCheck, ...]:
+        """Return SQL checks for a supported report type."""
+
+        if report_type == self.GARDEN_RANKING_REPORT:
+            return self._garden_ranking_checks()
+        if report_type == self.SALE_WISE_AVERAGE_PRICE_REPORT:
+            return self._sale_wise_average_price_checks()
+        return ()
 
     def _garden_ranking_checks(self) -> tuple[SQLCheck, ...]:
         """Return Garden Ranking SQL checks."""
@@ -186,6 +203,100 @@ class SQLReviewer:
             ),
         )
 
+    def _sale_wise_average_price_checks(self) -> tuple[SQLCheck, ...]:
+        """Return Sale Wise Average Price SQL checks."""
+
+        return (
+            SQLCheck(
+                name="FYear derived logic",
+                predicate=lambda sql, analysis, result: (
+                    "CAST(SUBSTRING(FinYear, 1, 4) AS INT64)" in sql
+                ),
+                failure_message="FYear derived logic is missing.",
+            ),
+            SQLCheck(
+                name="No direct FinYear filter",
+                predicate=lambda sql, analysis, result: not re.search(
+                    r"\bWHERE\s+FinYear\s*=\s*\d+", sql, flags=re.IGNORECASE
+                ),
+                failure_message="SQL directly filters FinYear instead of derived FYear.",
+            ),
+            SQLCheck(
+                name="SaleAlias logic",
+                predicate=lambda sql, analysis, result: (
+                    "IF(SaleNo BETWEEN 1 AND 13, 53 + SaleNo, SaleNo)" in sql
+                ),
+                failure_message="SaleAlias logic is missing.",
+            ),
+            SQLCheck(
+                name="AreaAlias logic",
+                predicate=self._has_area_alias_logic,
+                failure_message="AreaAlias logic is missing.",
+            ),
+            SQLCheck(
+                name="FYear filter",
+                predicate=lambda sql, analysis, result: bool(
+                    re.search(r"\bWHERE\s+FYear\s*=", sql, flags=re.IGNORECASE)
+                )
+                or bool(re.search(r"\bAND\s+FYear\s*=", sql, flags=re.IGNORECASE)),
+                failure_message="SQL does not filter using FYear.",
+            ),
+            SQLCheck(
+                name="SaleAlias filter",
+                predicate=lambda sql, analysis, result: bool(
+                    re.search(r"\bSaleAlias\s+(BETWEEN|=)", sql, flags=re.IGNORECASE)
+                ),
+                failure_message="SQL does not filter using SaleAlias.",
+            ),
+            SQLCheck(
+                name="AreaAlias filter",
+                predicate=lambda sql, analysis, result: bool(
+                    re.search(r"\bAreaAlias\s*=", sql, flags=re.IGNORECASE)
+                ),
+                failure_message="SQL does not filter using AreaAlias.",
+            ),
+            SQLCheck(
+                name="Category filter",
+                predicate=lambda sql, analysis, result: bool(
+                    re.search(r"\bCategory\s*=", sql, flags=re.IGNORECASE)
+                ),
+                failure_message="SQL does not filter using Category.",
+            ),
+            SQLCheck(
+                name="SAFE_DIVIDE average price",
+                predicate=lambda sql, analysis, result: "SAFE_DIVIDE" in sql,
+                failure_message="Average price does not use SAFE_DIVIDE.",
+            ),
+            SQLCheck(
+                name="SaleTransactionView source",
+                predicate=lambda sql, analysis, result: (
+                    "data-warehousing-prod.EasyReports.SaleTransactionView" in sql
+                ),
+                failure_message="SQL does not use SaleTransactionView.",
+            ),
+            SQLCheck(
+                name="No SELECT star",
+                predicate=lambda sql, analysis, result: not re.search(
+                    r"\bSELECT\s+\*", sql, flags=re.IGNORECASE
+                ),
+                failure_message="SQL contains SELECT *.",
+            ),
+            SQLCheck(
+                name="GROUP BY SaleAlias",
+                predicate=lambda sql, analysis, result: bool(
+                    re.search(r"\bGROUP\s+BY\s+SaleAlias\b", sql, flags=re.IGNORECASE)
+                ),
+                failure_message="SQL does not group by SaleAlias.",
+            ),
+            SQLCheck(
+                name="ORDER BY SaleAlias",
+                predicate=lambda sql, analysis, result: bool(
+                    re.search(r"\bORDER\s+BY\s+SaleAlias\b", sql, flags=re.IGNORECASE)
+                ),
+                failure_message="SQL does not order by SaleAlias.",
+            ),
+        )
+
     @staticmethod
     def _has_area_alias_logic(
         sql: str,
@@ -252,7 +363,7 @@ class SQLReviewer:
         """Return human-readable review summary."""
 
         if status == SQLReviewStatus.PASS:
-            return "SQL review passed all critical Garden Ranking checks."
+            return "SQL review passed all critical report checks."
         if status == SQLReviewStatus.WARNING:
             return "SQL review passed critical checks with warnings."
         return f"SQL review failed with {len(issues)} critical issue(s)."

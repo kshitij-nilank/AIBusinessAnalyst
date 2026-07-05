@@ -1,4 +1,4 @@
-"""SQL Generation Engine v1 for Garden Ranking Report only."""
+"""SQL Generation Engine for explicitly supported report types."""
 
 from __future__ import annotations
 
@@ -24,13 +24,14 @@ class SaleRange:
 
 
 class SQLGenerator:
-    """Generate SQL for Garden Ranking Report only."""
+    """Generate SQL for explicitly supported report types."""
 
-    SUPPORTED_REPORT_TYPE = "Garden Ranking Report"
+    GARDEN_RANKING_REPORT = "Garden Ranking Report"
+    SALE_WISE_AVERAGE_PRICE_REPORT = "Sale Wise Average Price Report"
     SOURCE_TABLE = "data-warehousing-prod.EasyReports.SaleTransactionView"
 
     def generate(self, analysis: RequirementAnalysis) -> SQLGenerationResult:
-        """Generate Garden Ranking SQL for an allowed requirement analysis."""
+        """Generate SQL for a supported, allowed requirement analysis."""
 
         if analysis.decision_status != DecisionStatus.SQL_ALLOWED:
             return SQLGenerationResult(
@@ -39,20 +40,31 @@ class SQLGenerator:
                 reason="RequirementAnalysis decision_status is not SQL_ALLOWED.",
             )
 
-        if analysis.known_information.report_type != self.SUPPORTED_REPORT_TYPE:
-            return SQLGenerationResult(
-                status=SQLGenerationStatus.BLOCKED,
-                report_type=analysis.known_information.report_type,
-                reason="SQL generation not implemented for this report type yet.",
-            )
+        report_type = analysis.known_information.report_type
+        if report_type == self.GARDEN_RANKING_REPORT:
+            return self._generate_garden_ranking(analysis)
+        if report_type == self.SALE_WISE_AVERAGE_PRICE_REPORT:
+            return self._generate_sale_wise_average_price(analysis)
 
-        context = self._build_context(analysis)
-        sql = self._render_template(context)
+        return SQLGenerationResult(
+            status=SQLGenerationStatus.BLOCKED,
+            report_type=report_type,
+            reason="SQL generation not implemented for this report type yet.",
+        )
+
+    def _generate_garden_ranking(
+        self,
+        analysis: RequirementAnalysis,
+    ) -> SQLGenerationResult:
+        """Generate Garden Ranking SQL."""
+
+        context = self._build_garden_ranking_context(analysis)
+        sql = self._render_template("garden_ranking.sql.j2", context)
 
         return SQLGenerationResult(
             status=SQLGenerationStatus.GENERATED,
             sql=sql,
-            report_type=self.SUPPORTED_REPORT_TYPE,
+            report_type=self.GARDEN_RANKING_REPORT,
             reason="Garden Ranking SQL generated.",
             warnings=[],
             source_tables=[self.SOURCE_TABLE],
@@ -65,26 +77,41 @@ class SQLGenerator:
             ],
         )
 
-    def _build_context(self, analysis: RequirementAnalysis) -> dict[str, str | int]:
+    def _generate_sale_wise_average_price(
+        self,
+        analysis: RequirementAnalysis,
+    ) -> SQLGenerationResult:
+        """Generate Sale Wise Average Price SQL."""
+
+        context = self._build_sale_wise_average_price_context(analysis)
+        sql = self._render_template("sale_wise_average_price.sql.j2", context)
+
+        return SQLGenerationResult(
+            status=SQLGenerationStatus.GENERATED,
+            sql=sql,
+            report_type=self.SALE_WISE_AVERAGE_PRICE_REPORT,
+            reason="Sale Wise Average Price SQL generated.",
+            warnings=[],
+            source_tables=[self.SOURCE_TABLE],
+            applied_business_rules=[
+                "BR-001 FYear",
+                "BR-002 SaleAlias",
+                "BR-003 AreaAlias",
+                "BR-006 AveragePrice",
+            ],
+        )
+
+    def _build_garden_ranking_context(
+        self,
+        analysis: RequirementAnalysis,
+    ) -> dict[str, str | int]:
         """Validate Garden Ranking inputs and build template context."""
 
+        context = self._base_context(analysis, report_name="Garden Ranking")
         known = analysis.known_information
-        season = known.season or (known.seasons[0] if known.seasons else None)
-        sale_range = self._parse_sale_range(known.sale_range)
-
-        required_values = {
-            "season": season,
-            "sale_range": known.sale_range,
-            "area": known.area,
-            "category": known.category,
-            "est_blf": known.est_blf,
-            "output_grain": known.output_grain,
-        }
-        missing = [name for name, value in required_values.items() if not value]
-        if missing:
+        if not known.est_blf:
             raise SQLGenerationError(
-                "Cannot generate Garden Ranking SQL. Missing required field(s): "
-                + ", ".join(missing)
+                "Cannot generate Garden Ranking SQL. Missing required field(s): est_blf"
             )
 
         metrics = {metric.casefold() for metric in known.metrics}
@@ -97,13 +124,64 @@ class SQLGenerator:
                 "Cannot generate Garden Ranking SQL. Grouping must be garden-wise."
             )
 
+        context["est_blf"] = known.est_blf
+        return context
+
+    def _build_sale_wise_average_price_context(
+        self,
+        analysis: RequirementAnalysis,
+    ) -> dict[str, str | int]:
+        """Validate Sale Wise Average Price inputs and build template context."""
+
+        context = self._base_context(
+            analysis,
+            report_name="Sale Wise Average Price",
+        )
+        known = analysis.known_information
+        metrics = {metric.casefold() for metric in known.metrics}
+        if "average price" not in metrics:
+            raise SQLGenerationError(
+                "Cannot generate Sale Wise Average Price SQL. Required metric is average price."
+            )
+        if known.output_grain != "sale-wise":
+            raise SQLGenerationError(
+                "Cannot generate Sale Wise Average Price SQL. Grouping must be sale-wise."
+            )
+
+        return context
+
+    def _base_context(
+        self,
+        analysis: RequirementAnalysis,
+        *,
+        report_name: str,
+    ) -> dict[str, str | int]:
+        """Validate common required fields and build shared template context."""
+
+        known = analysis.known_information
+        season = known.season or (known.seasons[0] if known.seasons else None)
+        sale_range = self._parse_sale_range(known.sale_range)
+
+        required_values = {
+            "season": season,
+            "sale_range": known.sale_range,
+            "area": known.area,
+            "category": known.category,
+            "output_grain": known.output_grain,
+        }
+        missing = [name for name, value in required_values.items() if not value]
+        if missing:
+            raise SQLGenerationError(
+                f"Cannot generate {report_name} SQL. Missing required field(s): "
+                + ", ".join(missing)
+            )
+
         return {
             "source_table": self.SOURCE_TABLE,
             "season": int(season),
             "sale_filter": self._sale_filter(sale_range),
             "area_alias": known.area,
             "category": known.category,
-            "est_blf": known.est_blf,
         }
 
     @staticmethod
@@ -144,17 +222,21 @@ class SQLGenerator:
             return f"SaleAlias = {sale_range.start}"
         return f"SaleAlias BETWEEN {sale_range.start} AND {sale_range.end}"
 
-    def _render_template(self, context: dict[str, str | int]) -> str:
-        """Render the Garden Ranking SQL template using simple placeholders."""
+    def _render_template(
+        self,
+        template_name: str,
+        context: dict[str, str | int],
+    ) -> str:
+        """Render a SQL template using simple placeholders."""
 
-        template = self._template_path().read_text(encoding="utf-8")
+        template = self._template_path(template_name).read_text(encoding="utf-8")
         sql = template
         for key, value in context.items():
             sql = sql.replace("{{ " + key + " }}", str(value))
         return sql.strip()
 
     @staticmethod
-    def _template_path() -> Path:
-        """Return the Garden Ranking SQL template path."""
+    def _template_path(template_name: str) -> Path:
+        """Return a SQL template path."""
 
-        return Path(__file__).resolve().parent / "templates" / "garden_ranking.sql.j2"
+        return Path(__file__).resolve().parent / "templates" / template_name

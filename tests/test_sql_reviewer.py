@@ -28,6 +28,24 @@ def _analysis() -> RequirementAnalysis:
     )
 
 
+def _sale_wise_analysis() -> RequirementAnalysis:
+    return RequirementAnalysis(
+        summary="Sale Wise Average Price Report",
+        known_information=KnownInformation(
+            report_type="Sale Wise Average Price Report",
+            season=2026,
+            sale_range="sale 20",
+            area="AS",
+            category="ORTHODOX",
+            metrics=["average price"],
+            output_grain="sale-wise",
+        ),
+        sql_generation_allowed=True,
+        decision_status=DecisionStatus.SQL_ALLOWED,
+        metadata={"confidence_score": 0.85},
+    )
+
+
 def _generated() -> tuple[RequirementAnalysis, SQLGenerationResult, str]:
     analysis = _analysis()
     generation_result = SQLGenerator().generate(analysis)
@@ -103,3 +121,16 @@ def test_sql_with_select_star_fails() -> None:
 
     assert result.status == SQLReviewStatus.FAIL
     assert "No SELECT star" in result.failed_checks
+
+
+def test_sale_wise_average_price_sql_review_passes() -> None:
+    analysis = _sale_wise_analysis()
+    generation_result = SQLGenerator().generate(analysis)
+    assert generation_result.sql is not None
+
+    result = SQLReviewer().review(generation_result.sql, analysis, generation_result)
+
+    assert result.status == SQLReviewStatus.PASS
+    assert "GROUP BY SaleAlias" in result.passed_checks
+    assert "ORDER BY SaleAlias" in result.passed_checks
+    assert "SAFE_DIVIDE average price" in result.passed_checks
