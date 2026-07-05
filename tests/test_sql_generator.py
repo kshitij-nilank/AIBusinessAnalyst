@@ -67,6 +67,24 @@ def _buyer_purchase_analysis() -> RequirementAnalysis:
     )
 
 
+def _price_band_analysis() -> RequirementAnalysis:
+    return RequirementAnalysis(
+        summary="Price Band Report",
+        known_information=KnownInformation(
+            report_type="Price Band Report",
+            season=2025,
+            sale_range="sale 14 to 26",
+            area="DO",
+            category="CTC",
+            metrics=["price band analysis"],
+            output_grain="garden-wise",
+        ),
+        sql_generation_allowed=True,
+        decision_status=DecisionStatus.SQL_ALLOWED,
+        metadata={"confidence_score": 0.85},
+    )
+
+
 def test_sql_generated_for_complete_garden_ranking_report() -> None:
     result = SQLGenerator().generate(_garden_ranking_analysis())
 
@@ -245,3 +263,55 @@ def test_sale_wise_average_price_existing_test_still_passes() -> None:
 
     assert result.status == SQLGenerationStatus.GENERATED
     assert "SaleAlias = 20" in result.sql
+
+
+def test_price_band_sql_generated() -> None:
+    result = SQLGenerator().generate(_price_band_analysis())
+
+    assert result.status == SQLGenerationStatus.GENERATED
+    assert result.report_type == "Price Band Report"
+    assert result.sql is not None
+    assert "PriceBand" in result.sql
+    assert "COUNT(DISTINCT GardenMDM) AS Garden_Count" in result.sql
+
+
+def test_price_band_sql_contains_required_filters_and_grouping() -> None:
+    result = SQLGenerator().generate(_price_band_analysis())
+
+    assert "WHERE FYear = 2025" in result.sql
+    assert "SaleAlias BETWEEN 14 AND 26" in result.sql
+    assert "AreaAlias = 'DO/TR'" in result.sql
+    assert "Category = 'CTC'" in result.sql
+    assert "GROUP BY PriceBand, PriceBandSort" in result.sql
+    assert "ORDER BY PriceBandSort" in result.sql
+
+
+def test_price_band_sql_contains_parcon_standard_bands() -> None:
+    result = SQLGenerator().generate(_price_band_analysis())
+
+    for band in (
+        "Above 300",
+        "280-300",
+        "260-279",
+        "240-259",
+        "225-250",
+        "200-220",
+        "180-200",
+        "160-180",
+        "Below 160",
+    ):
+        assert band in result.sql
+
+    assert "WHEN Avg_Price > 300 THEN 1" in result.sql
+    assert "ELSE 9" in result.sql
+    assert "ORDER BY PriceBandSort" in result.sql
+
+
+def test_existing_reports_still_generate_after_price_band_addition() -> None:
+    garden_result = SQLGenerator().generate(_garden_ranking_analysis())
+    sale_result = SQLGenerator().generate(_sale_wise_average_price_analysis())
+    buyer_result = SQLGenerator().generate(_buyer_purchase_analysis())
+
+    assert garden_result.status == SQLGenerationStatus.GENERATED
+    assert sale_result.status == SQLGenerationStatus.GENERATED
+    assert buyer_result.status == SQLGenerationStatus.GENERATED

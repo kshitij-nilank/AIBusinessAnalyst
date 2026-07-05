@@ -27,6 +27,7 @@ class SQLReviewer:
     GARDEN_RANKING_REPORT = "Garden Ranking Report"
     SALE_WISE_AVERAGE_PRICE_REPORT = "Sale Wise Average Price Report"
     BUYER_PURCHASE_REPORT = "Buyer Purchase Report"
+    PRICE_BAND_REPORT = "Price Band Report"
 
     def review(
         self,
@@ -92,6 +93,8 @@ class SQLReviewer:
             return self._sale_wise_average_price_checks()
         if report_type == self.BUYER_PURCHASE_REPORT:
             return self._buyer_purchase_checks()
+        if report_type == self.PRICE_BAND_REPORT:
+            return self._price_band_checks()
         return ()
 
     def _garden_ranking_checks(self) -> tuple[SQLCheck, ...]:
@@ -383,6 +386,100 @@ class SQLReviewer:
                     re.search(r"\bGROUP\s+BY\s+BuyerMDM\b", sql, flags=re.IGNORECASE)
                 ),
                 failure_message="SQL does not group buyer-wise.",
+            ),
+            SQLCheck(
+                name="SaleTransactionView source",
+                predicate=lambda sql, analysis, result: (
+                    "data-warehousing-prod.EasyReports.SaleTransactionView" in sql
+                ),
+                failure_message="SQL does not use SaleTransactionView.",
+            ),
+            SQLCheck(
+                name="No SELECT star",
+                predicate=lambda sql, analysis, result: not re.search(
+                    r"\bSELECT\s+\*", sql, flags=re.IGNORECASE
+                ),
+                failure_message="SQL contains SELECT *.",
+            ),
+        )
+
+    def _price_band_checks(self) -> tuple[SQLCheck, ...]:
+        """Return Price Band SQL checks."""
+
+        return (
+            SQLCheck(
+                name="FYear derived logic",
+                predicate=lambda sql, analysis, result: (
+                    "CAST(SUBSTRING(FinYear, 1, 4) AS INT64)" in sql
+                ),
+                failure_message="FYear derived logic is missing.",
+            ),
+            SQLCheck(
+                name="SaleAlias logic",
+                predicate=lambda sql, analysis, result: (
+                    "IF(SaleNo BETWEEN 1 AND 13, 53 + SaleNo, SaleNo)" in sql
+                ),
+                failure_message="SaleAlias logic is missing.",
+            ),
+            SQLCheck(
+                name="AreaAlias logic",
+                predicate=self._has_area_alias_logic,
+                failure_message="AreaAlias logic is missing.",
+            ),
+            SQLCheck(
+                name="FYear filter",
+                predicate=lambda sql, analysis, result: bool(
+                    re.search(r"\bWHERE\s+FYear\s*=", sql, flags=re.IGNORECASE)
+                )
+                or bool(re.search(r"\bAND\s+FYear\s*=", sql, flags=re.IGNORECASE)),
+                failure_message="SQL does not filter using FYear.",
+            ),
+            SQLCheck(
+                name="SaleAlias filter",
+                predicate=lambda sql, analysis, result: bool(
+                    re.search(r"\bSaleAlias\s+(BETWEEN|=)", sql, flags=re.IGNORECASE)
+                ),
+                failure_message="SQL does not filter using SaleAlias.",
+            ),
+            SQLCheck(
+                name="AreaAlias filter",
+                predicate=lambda sql, analysis, result: bool(
+                    re.search(r"\bAreaAlias\s*=", sql, flags=re.IGNORECASE)
+                ),
+                failure_message="SQL does not filter using AreaAlias.",
+            ),
+            SQLCheck(
+                name="Category filter",
+                predicate=lambda sql, analysis, result: bool(
+                    re.search(r"\bCategory\s*=", sql, flags=re.IGNORECASE)
+                ),
+                failure_message="SQL does not filter using Category.",
+            ),
+            SQLCheck(
+                name="PriceBand CASE",
+                predicate=lambda sql, analysis, result: (
+                    "CASE" in sql and "END AS PriceBand" in sql
+                ),
+                failure_message="SQL does not create PriceBand using CASE.",
+            ),
+            SQLCheck(
+                name="SAFE_DIVIDE average price",
+                predicate=lambda sql, analysis, result: "SAFE_DIVIDE" in sql,
+                failure_message="Average price does not use SAFE_DIVIDE.",
+            ),
+            SQLCheck(
+                name="GROUP BY PriceBand",
+                predicate=lambda sql, analysis, result: bool(
+                    re.search(r"\bGROUP\s+BY\s+PriceBand\b", sql, flags=re.IGNORECASE)
+                )
+                or bool(
+                    re.search(
+                        r"\bGROUP\s+BY\s+PriceBand\s*,\s*PriceBandSort\b",
+                        sql,
+                        flags=re.IGNORECASE,
+                    )
+                ),
+                failure_message="SQL does not group final output by PriceBand.",
             ),
             SQLCheck(
                 name="SaleTransactionView source",

@@ -1,0 +1,73 @@
+WITH prepared_sales AS (
+    SELECT
+        GardenMDM,
+        Season,
+        FinYear,
+        CASE
+            WHEN CAST(SUBSTRING(FinYear, 1, 4) AS INT64) = Season
+            THEN Season
+            ELSE 0
+        END AS FYear,
+        Category,
+        TotalWeight,
+        Value,
+        IF(SaleNo BETWEEN 1 AND 13, 53 + SaleNo, SaleNo) AS SaleAlias,
+        CASE
+            WHEN Area = 'AS' THEN 'AS'
+            WHEN Area IN ('DO', 'TR') THEN 'DO/TR'
+            WHEN Area IN ('CA', 'TP') THEN 'CA/TP'
+            ELSE 'OTHERS'
+        END AS AreaAlias
+    FROM `{{ source_table }}`
+),
+garden_summary AS (
+    SELECT
+        GardenMDM,
+        SUM(TotalWeight) AS Sold_Qty,
+        SUM(Value) AS Total_Value,
+        SAFE_DIVIDE(SUM(Value), SUM(TotalWeight)) AS Avg_Price
+    FROM prepared_sales
+    WHERE FYear = {{ season }}
+        AND {{ sale_filter }}
+        AND AreaAlias = '{{ area_alias }}'
+        AND Category = '{{ category }}'
+    GROUP BY GardenMDM
+),
+garden_price_band AS (
+    SELECT
+        GardenMDM,
+        Sold_Qty,
+        Total_Value,
+        Avg_Price,
+        CASE
+            WHEN Avg_Price > 300 THEN 'Above 300'
+            WHEN Avg_Price >= 280 AND Avg_Price <= 300 THEN '280-300'
+            WHEN Avg_Price >= 260 AND Avg_Price <= 279 THEN '260-279'
+            WHEN Avg_Price >= 240 AND Avg_Price <= 259 THEN '240-259'
+            WHEN Avg_Price >= 225 AND Avg_Price <= 250 THEN '225-250'
+            WHEN Avg_Price >= 200 AND Avg_Price <= 220 THEN '200-220'
+            WHEN Avg_Price >= 180 AND Avg_Price <= 200 THEN '180-200'
+            WHEN Avg_Price >= 160 AND Avg_Price <= 180 THEN '160-180'
+            ELSE 'Below 160'
+        END AS PriceBand,
+        CASE
+            WHEN Avg_Price > 300 THEN 1
+            WHEN Avg_Price >= 280 AND Avg_Price <= 300 THEN 2
+            WHEN Avg_Price >= 260 AND Avg_Price <= 279 THEN 3
+            WHEN Avg_Price >= 240 AND Avg_Price <= 259 THEN 4
+            WHEN Avg_Price >= 225 AND Avg_Price <= 250 THEN 5
+            WHEN Avg_Price >= 200 AND Avg_Price <= 220 THEN 6
+            WHEN Avg_Price >= 180 AND Avg_Price <= 200 THEN 7
+            WHEN Avg_Price >= 160 AND Avg_Price <= 180 THEN 8
+            ELSE 9
+        END AS PriceBandSort
+    FROM garden_summary
+)
+SELECT
+    PriceBand,
+    COUNT(DISTINCT GardenMDM) AS Garden_Count,
+    SUM(Sold_Qty) AS Sold_Qty,
+    SUM(Total_Value) AS Total_Value
+FROM garden_price_band
+GROUP BY PriceBand, PriceBandSort
+ORDER BY PriceBandSort

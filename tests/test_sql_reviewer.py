@@ -64,6 +64,24 @@ def _buyer_purchase_analysis() -> RequirementAnalysis:
     )
 
 
+def _price_band_analysis() -> RequirementAnalysis:
+    return RequirementAnalysis(
+        summary="Price Band Report",
+        known_information=KnownInformation(
+            report_type="Price Band Report",
+            season=2025,
+            sale_range="sale 14 to 26",
+            area="DO",
+            category="CTC",
+            metrics=["price band analysis"],
+            output_grain="garden-wise",
+        ),
+        sql_generation_allowed=True,
+        decision_status=DecisionStatus.SQL_ALLOWED,
+        metadata={"confidence_score": 0.85},
+    )
+
+
 def _generated() -> tuple[RequirementAnalysis, SQLGenerationResult, str]:
     analysis = _analysis()
     generation_result = SQLGenerator().generate(analysis)
@@ -164,4 +182,17 @@ def test_buyer_purchase_sql_review_passes() -> None:
     assert result.status == SQLReviewStatus.PASS
     assert "BuyerMDM mapping" in result.passed_checks
     assert "Buyer-wise GROUP BY" in result.passed_checks
+    assert "SAFE_DIVIDE average price" in result.passed_checks
+
+
+def test_price_band_sql_review_passes() -> None:
+    analysis = _price_band_analysis()
+    generation_result = SQLGenerator().generate(analysis)
+    assert generation_result.sql is not None
+
+    result = SQLReviewer().review(generation_result.sql, analysis, generation_result)
+
+    assert result.status == SQLReviewStatus.PASS
+    assert "PriceBand CASE" in result.passed_checks
+    assert "GROUP BY PriceBand" in result.passed_checks
     assert "SAFE_DIVIDE average price" in result.passed_checks

@@ -29,6 +29,7 @@ class SQLGenerator:
     GARDEN_RANKING_REPORT = "Garden Ranking Report"
     SALE_WISE_AVERAGE_PRICE_REPORT = "Sale Wise Average Price Report"
     BUYER_PURCHASE_REPORT = "Buyer Purchase Report"
+    PRICE_BAND_REPORT = "Price Band Report"
     SOURCE_TABLE = "data-warehousing-prod.EasyReports.SaleTransactionView"
     BUYER_GROUP_TABLE = "data-warehousing-prod.EasyReports.Parcon-BuyerGroup"
     BUYER_MAPPING = {
@@ -53,6 +54,8 @@ class SQLGenerator:
             return self._generate_sale_wise_average_price(analysis)
         if report_type == self.BUYER_PURCHASE_REPORT:
             return self._generate_buyer_purchase(analysis)
+        if report_type == self.PRICE_BAND_REPORT:
+            return self._generate_price_band(analysis)
 
         return SQLGenerationResult(
             status=SQLGenerationStatus.BLOCKED,
@@ -129,6 +132,30 @@ class SQLGenerator:
                 "BR-002 SaleAlias",
                 "BR-003 AreaAlias",
                 "BR-006 AveragePrice",
+            ],
+        )
+
+    def _generate_price_band(
+        self,
+        analysis: RequirementAnalysis,
+    ) -> SQLGenerationResult:
+        """Generate Price Band SQL."""
+
+        context = self._build_price_band_context(analysis)
+        sql = self._render_template("price_band.sql.j2", context)
+
+        return SQLGenerationResult(
+            status=SQLGenerationStatus.GENERATED,
+            sql=sql,
+            report_type=self.PRICE_BAND_REPORT,
+            reason="Price Band SQL generated.",
+            warnings=[],
+            source_tables=[self.SOURCE_TABLE],
+            applied_business_rules=[
+                "BR-001 FYear",
+                "BR-002 SaleAlias",
+                "BR-003 AreaAlias",
+                "BR-007 PriceBands",
             ],
         )
 
@@ -225,6 +252,27 @@ class SQLGenerator:
             "buyer_group": buyer_group,
         }
 
+    def _build_price_band_context(
+        self,
+        analysis: RequirementAnalysis,
+    ) -> dict[str, str | int]:
+        """Validate Price Band inputs and build template context."""
+
+        context = self._base_context(analysis, report_name="Price Band")
+        known = analysis.known_information
+        metrics = {metric.casefold() for metric in known.metrics}
+        if "price band analysis" not in metrics:
+            raise SQLGenerationError(
+                "Cannot generate Price Band SQL. Required metric is price band analysis."
+            )
+        if known.output_grain != "garden-wise":
+            raise SQLGenerationError(
+                "Cannot generate Price Band SQL. Grouping must be garden-wise."
+            )
+
+        context["area_alias"] = self._sql_area_alias(str(context["area_alias"]))
+        return context
+
     def _base_context(
         self,
         analysis: RequirementAnalysis,
@@ -309,6 +357,16 @@ class SQLGenerator:
         if normalized in cls.BUYER_MAPPING.values():
             return normalized
         return buyer.strip()
+
+    @staticmethod
+    def _sql_area_alias(area: str) -> str:
+        """Return SQL AreaAlias value for area-level filters."""
+
+        if area == "DO":
+            return "DO/TR"
+        if area == "CA":
+            return "CA/TP"
+        return area
 
     def _render_template(
         self,
