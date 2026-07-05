@@ -232,6 +232,18 @@ def display_analysis(analysis: RequirementAnalysis) -> None:
         "SQL Generation Status",
         "Allowed" if analysis.sql_generation_allowed else "Blocked",
     )
+    print_section(
+        "Decision Status",
+        analysis.decision_status.value if analysis.decision_status else "Unknown",
+    )
+    print_section(
+        "Decision Reason",
+        analysis.decision_reason or "Unknown",
+    )
+    print_section(
+        "Next Action",
+        analysis.next_action or "Unknown",
+    )
     if analysis.metadata.get("llm_mode") == "offline_fallback":
         print_section(
             "Note",

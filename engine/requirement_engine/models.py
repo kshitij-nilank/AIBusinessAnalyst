@@ -26,6 +26,14 @@ class RequirementStatus(str, Enum):
     BLOCKED = "blocked"
 
 
+class DecisionStatus(str, Enum):
+    """Final decision status for downstream SQL generation."""
+
+    SQL_ALLOWED = "SQL_ALLOWED"
+    SQL_BLOCKED = "SQL_BLOCKED"
+    NEED_CLARIFICATION = "NEED_CLARIFICATION"
+
+
 class QuestionPriority(str, Enum):
     """Priority level for a clarification question."""
 
@@ -426,6 +434,20 @@ class RequirementAnalysis(BaseModel):
     sql_generation_allowed: bool = Field(
         default=False,
         description="Whether the requirement is sufficiently complete for SQL generation.",
+    )
+    decision_status: DecisionStatus | None = Field(
+        default=None,
+        description="Final SQL-readiness decision after validation and resolution.",
+    )
+    decision_reason: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Business-facing reason for the decision.",
+    )
+    next_action: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Recommended next action for the analyst or downstream engine.",
     )
     metadata: dict[str, Any] = Field(
         default_factory=dict,

@@ -3,7 +3,8 @@
 The orchestrator coordinates the requirement-understanding workflow:
 
 User Requirement -> Knowledge Loader -> Prompt Builder -> LLM Client ->
-Response Parser -> Requirement Validator -> RequirementAnalysis
+Response Parser -> Requirement Validator -> Resolvers -> Decision Engine ->
+RequirementAnalysis
 
 This module intentionally contains no business rules, prompt text, markdown
 parsing, SQL generation, provider-specific LLM code, or validation logic. All
@@ -17,6 +18,7 @@ from typing import Any, Protocol
 
 from engine.requirement_engine.business_rule_resolver import BusinessRuleResolver
 from engine.requirement_engine.database_resolver import DatabaseResolver
+from engine.requirement_engine.decision_engine import DecisionEngine
 from engine.requirement_engine.knowledge_loader import (
     KnowledgeCollection,
     KnowledgeSection,
@@ -52,6 +54,10 @@ class ResponseParsingError(RequirementOrchestratorError):
 
 class RequirementValidationError(RequirementOrchestratorError):
     """Raised when the validator dependency fails."""
+
+
+class RequirementDecisionError(RequirementOrchestratorError):
+    """Raised when the decision engine dependency fails."""
 
 
 class KnowledgeLoaderProtocol(Protocol):
@@ -98,6 +104,13 @@ class RequirementValidatorProtocol(Protocol):
         """Validate and return an updated requirement analysis."""
 
 
+class DecisionEngineProtocol(Protocol):
+    """Dependency contract for deciding final SQL readiness."""
+
+    def decide(self, analysis: RequirementAnalysis) -> RequirementAnalysis:
+        """Decide and return an updated requirement analysis."""
+
+
 class RequirementUnderstandingOrchestrator:
     """Coordinate the Requirement Understanding Engine workflow.
 
@@ -115,6 +128,7 @@ class RequirementUnderstandingOrchestrator:
         requirement_validator: RequirementValidatorProtocol,
         business_rule_resolver: BusinessRuleResolver | None = None,
         database_resolver: DatabaseResolver | None = None,
+        decision_engine: DecisionEngineProtocol | None = None,
     ) -> None:
         """Create an orchestrator with fully injected dependencies.
 
@@ -133,6 +147,7 @@ class RequirementUnderstandingOrchestrator:
         self.requirement_validator = requirement_validator
         self.business_rule_resolver = business_rule_resolver or BusinessRuleResolver()
         self.database_resolver = database_resolver or DatabaseResolver()
+        self.decision_engine = decision_engine or DecisionEngine()
 
     def analyze(self, requirement: str) -> RequirementAnalysis:
         """Analyze a plain-text business requirement.
@@ -143,7 +158,9 @@ class RequirementUnderstandingOrchestrator:
         3. Call LLM.
         4. Parse response.
         5. Validate parsed analysis.
-        6. Return final ``RequirementAnalysis``.
+        6. Resolve business rules and database candidates.
+        7. Decide final SQL readiness.
+        8. Return final ``RequirementAnalysis``.
 
         Args:
             requirement: Plain-text stakeholder requirement.
@@ -169,7 +186,8 @@ class RequirementUnderstandingOrchestrator:
             raw_response = self._call_llm(prompt=prompt)
             parsed_analysis = self._parse_response(raw_response)
             validated_analysis = self._validate_analysis(parsed_analysis)
-            final_analysis = self._resolve_context(validated_analysis)
+            resolved_analysis = self._resolve_context(validated_analysis)
+            final_analysis = self._decide_analysis(resolved_analysis)
         except RequirementOrchestratorError:
             raise
         except Exception as exc:
@@ -351,6 +369,35 @@ class RequirementUnderstandingOrchestrator:
             },
         )
         return validated
+
+    def _decide_analysis(self, analysis: RequirementAnalysis) -> RequirementAnalysis:
+        """Decide final SQL readiness using the injected decision engine."""
+
+        logger.info(
+            "Deciding final SQL readiness.",
+            extra={"event": "requirement_decision_deciding"},
+        )
+        try:
+            decided = self.decision_engine.decide(analysis)
+        except Exception as exc:
+            raise RequirementDecisionError("Requirement decision failed.") from exc
+
+        if decided is None:
+            raise RequirementDecisionError("Decision engine returned no analysis.")
+
+        logger.info(
+            "Final SQL readiness decided.",
+            extra={
+                "event": "requirement_decision_decided",
+                "decision_status": (
+                    decided.decision_status.value
+                    if decided.decision_status
+                    else None
+                ),
+                "sql_generation_allowed": decided.sql_generation_allowed,
+            },
+        )
+        return decided
 
     def _resolve_context(self, analysis: RequirementAnalysis) -> RequirementAnalysis:
         """Resolve business rules and database objects for validated analysis."""
