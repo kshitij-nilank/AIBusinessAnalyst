@@ -12,6 +12,12 @@ class IntentClassifier:
         """Return a report type when a known intent is detected."""
 
         normalized = _normalize(text)
+        seasons = re.findall(r"\b(19\d{2}|20\d{2}|21\d{2})\b", normalized)
+
+        if ("compare" in normalized or re.search(r"\bvs\b", normalized)) and len(
+            set(seasons)
+        ) >= 2:
+            return "Comparison Report"
 
         if re.search(r"\bsale\s*[- ]?wise\b", normalized) and "average price" in normalized:
             return "Sale Wise Average Price Report"

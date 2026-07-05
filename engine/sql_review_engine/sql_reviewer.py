@@ -28,6 +28,7 @@ class SQLReviewer:
     SALE_WISE_AVERAGE_PRICE_REPORT = "Sale Wise Average Price Report"
     BUYER_PURCHASE_REPORT = "Buyer Purchase Report"
     PRICE_BAND_REPORT = "Price Band Report"
+    COMPARISON_REPORT = "Comparison Report"
 
     def review(
         self,
@@ -95,6 +96,8 @@ class SQLReviewer:
             return self._buyer_purchase_checks()
         if report_type == self.PRICE_BAND_REPORT:
             return self._price_band_checks()
+        if report_type == self.COMPARISON_REPORT:
+            return self._comparison_checks()
         return ()
 
     def _garden_ranking_checks(self) -> tuple[SQLCheck, ...]:
@@ -497,6 +500,70 @@ class SQLReviewer:
             ),
         )
 
+    def _comparison_checks(self) -> tuple[SQLCheck, ...]:
+        """Return Comparison Report SQL checks."""
+
+        return (
+            SQLCheck(
+                name="FYear derived logic",
+                predicate=lambda sql, analysis, result: (
+                    "CAST(SUBSTRING(sales.FinYear, 1, 4) AS INT64)" in sql
+                    or "CAST(SUBSTRING(FinYear, 1, 4) AS INT64)" in sql
+                ),
+                failure_message="FYear derived logic is missing.",
+            ),
+            SQLCheck(
+                name="SaleAlias logic",
+                predicate=lambda sql, analysis, result: (
+                    "IF(sales.SaleNo BETWEEN 1 AND 13, 53 + sales.SaleNo, sales.SaleNo)"
+                    in sql
+                )
+                or ("IF(SaleNo BETWEEN 1 AND 13, 53 + SaleNo, SaleNo)" in sql),
+                failure_message="SaleAlias logic is missing.",
+            ),
+            SQLCheck(
+                name="FYear IN comparison seasons",
+                predicate=self._has_comparison_seasons,
+                failure_message="SQL does not filter FYear IN with both comparison seasons.",
+            ),
+            SQLCheck(
+                name="Category filter",
+                predicate=lambda sql, analysis, result: bool(
+                    re.search(r"\bCategory\s*=", sql, flags=re.IGNORECASE)
+                ),
+                failure_message="SQL does not filter using Category.",
+            ),
+            SQLCheck(
+                name="Buyer mapping filter",
+                predicate=lambda sql, analysis, result: (
+                    "data-warehousing-prod.EasyReports.Parcon-BuyerGroup" in sql
+                    and "BuyerMDM" in sql
+                    and re.search(r"\bBuyerMDM\s*=", sql, flags=re.IGNORECASE)
+                    is not None
+                ),
+                failure_message="SQL does not use buyer mapping/filter.",
+            ),
+            SQLCheck(
+                name="GROUP BY FYear",
+                predicate=lambda sql, analysis, result: bool(
+                    re.search(r"\bGROUP\s+BY\s+FYear\b", sql, flags=re.IGNORECASE)
+                ),
+                failure_message="SQL does not group by FYear.",
+            ),
+            SQLCheck(
+                name="SAFE_DIVIDE average price",
+                predicate=lambda sql, analysis, result: "SAFE_DIVIDE" in sql,
+                failure_message="Average price does not use SAFE_DIVIDE.",
+            ),
+            SQLCheck(
+                name="No SELECT star",
+                predicate=lambda sql, analysis, result: not re.search(
+                    r"\bSELECT\s+\*", sql, flags=re.IGNORECASE
+                ),
+                failure_message="SQL contains SELECT *.",
+            ),
+        )
+
     @staticmethod
     def _has_area_alias_logic(
         sql: str,
@@ -527,6 +594,24 @@ class SQLReviewer:
         if not analysis.known_information.est_blf:
             return True
         return bool(re.search(r"\bEstBlf\s*=", sql, flags=re.IGNORECASE))
+
+    @staticmethod
+    def _has_comparison_seasons(
+        sql: str,
+        analysis: RequirementAnalysis,
+        result: SQLGenerationResult,
+    ) -> bool:
+        """Return whether SQL filters FYear IN with both comparison seasons."""
+
+        seasons = [str(season) for season in analysis.known_information.seasons[:2]]
+        if len(seasons) < 2:
+            return False
+        compact_sql = re.sub(r"\s+", " ", sql)
+        match = re.search(r"\bFYear\s+IN\s*\(([^)]*)\)", compact_sql, re.IGNORECASE)
+        if not match:
+            return False
+        selected = {value.strip() for value in match.group(1).split(",")}
+        return set(seasons).issubset(selected)
 
     @staticmethod
     def _status(issues: list[str], warnings: list[str]) -> SQLReviewStatus:

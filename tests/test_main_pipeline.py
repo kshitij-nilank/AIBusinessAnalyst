@@ -8,6 +8,9 @@ from engine.requirement_engine.orchestrator import RequirementUnderstandingOrche
 from engine.requirement_engine.prompt_builder import PromptBuilder
 from engine.requirement_engine.response_parser import RequirementResponseParser
 from engine.requirement_engine.validator import RequirementValidator
+from engine.sql_engine.sql_generator import SQLGenerator
+from engine.sql_review_engine.review_models import SQLReviewStatus
+from engine.sql_review_engine.sql_reviewer import SQLReviewer
 
 
 def test_main_orchestrator_offline_fallback_blocks_incomplete_requirement() -> None:
@@ -117,7 +120,7 @@ def test_offline_fallback_extracts_hookmol_requirement() -> None:
     assert known.sale_range == "up to sale 26"
     assert known.metrics == ["average price"]
     assert known.output_grain == "garden-wise"
-    assert known.report_type == "Garden Average Report"
+    assert known.report_type == "Comparison Report"
     assert parsed.analysis.metadata["llm_mode"] == "offline_fallback"
 
 
@@ -140,7 +143,7 @@ def test_orchestrator_with_offline_fallback_extracts_hookmol_requirement() -> No
     assert known.sale_range == "up to sale 26"
     assert known.metrics == ["average price"]
     assert known.output_grain == "garden-wise"
-    assert known.report_type == "Garden Average Report"
+    assert known.report_type == "Comparison Report"
     assert result.sql_generation_allowed is False
 
 
@@ -201,6 +204,42 @@ def test_offline_extracts_comparison_buying_report() -> None:
     assert known.sale_range == "up to sale 26"
     assert known.metrics == ["quantity", "value"]
     assert known.report_type == "Comparison Report"
+
+
+def test_comparison_buyer_wise_requirement_reaches_allowed_sql() -> None:
+    orchestrator = RequirementUnderstandingOrchestrator(
+        knowledge_loader=KnowledgeLoader(),
+        prompt_builder=PromptBuilder(),
+        llm_client=OfflineRequirementLLMClient(),
+        response_parser=RequirementResponseParser(),
+        requirement_validator=RequirementValidator(),
+    )
+
+    result = orchestrator.analyze(
+        "compare TCPL buying 2025 vs 2026 upto sale 26 ctc buyer wise"
+    )
+    known = result.known_information
+
+    assert known.report_type == "Comparison Report"
+    assert known.buyer == "TATA CONSUMER PRODUCTS LTD."
+    assert known.seasons == [2025, 2026]
+    assert known.category == "CTC"
+    assert known.sale_range == "up to sale 26"
+    assert known.output_grain == "buyer-wise"
+    assert result.decision_status is not None
+    assert result.decision_status.value == "SQL_ALLOWED"
+
+    generation_result = SQLGenerator().generate(result)
+    assert generation_result.sql is not None
+    assert "FYear IN (2025, 2026)" in generation_result.sql
+    assert "FYear = 2025" not in generation_result.sql
+
+    review_result = SQLReviewer().review(
+        generation_result.sql,
+        result,
+        generation_result,
+    )
+    assert review_result.status == SQLReviewStatus.PASS
 
 
 def test_offline_sale_wise_average_does_not_extract_wise_as_garden() -> None:

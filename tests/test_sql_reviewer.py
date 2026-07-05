@@ -82,6 +82,24 @@ def _price_band_analysis() -> RequirementAnalysis:
     )
 
 
+def _comparison_analysis() -> RequirementAnalysis:
+    return RequirementAnalysis(
+        summary="Comparison Report",
+        known_information=KnownInformation(
+            report_type="Comparison Report",
+            seasons=[2025, 2026],
+            sale_range="up to sale 26",
+            buyer="TCPL",
+            category="CTC",
+            metrics=["quantity", "value"],
+            output_grain="buyer-wise",
+        ),
+        sql_generation_allowed=True,
+        decision_status=DecisionStatus.SQL_ALLOWED,
+        metadata={"confidence_score": 0.85},
+    )
+
+
 def _generated() -> tuple[RequirementAnalysis, SQLGenerationResult, str]:
     analysis = _analysis()
     generation_result = SQLGenerator().generate(analysis)
@@ -218,3 +236,16 @@ def test_price_band_review_sql_contains_standard_price_bands() -> None:
 
     assert "225-250" not in generation_result.sql
     assert "WHEN Avg_Price >= 225 AND Avg_Price <= 239 THEN 5" in generation_result.sql
+
+
+def test_comparison_sql_review_passes() -> None:
+    analysis = _comparison_analysis()
+    generation_result = SQLGenerator().generate(analysis)
+    assert generation_result.sql is not None
+
+    result = SQLReviewer().review(generation_result.sql, analysis, generation_result)
+
+    assert result.status == SQLReviewStatus.PASS
+    assert "FYear IN comparison seasons" in result.passed_checks
+    assert "Buyer mapping filter" in result.passed_checks
+    assert "GROUP BY FYear" in result.passed_checks

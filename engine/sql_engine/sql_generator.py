@@ -30,6 +30,7 @@ class SQLGenerator:
     SALE_WISE_AVERAGE_PRICE_REPORT = "Sale Wise Average Price Report"
     BUYER_PURCHASE_REPORT = "Buyer Purchase Report"
     PRICE_BAND_REPORT = "Price Band Report"
+    COMPARISON_REPORT = "Comparison Report"
     SOURCE_TABLE = "data-warehousing-prod.EasyReports.SaleTransactionView"
     BUYER_GROUP_TABLE = "data-warehousing-prod.EasyReports.Parcon-BuyerGroup"
     BUYER_MAPPING = {
@@ -56,6 +57,8 @@ class SQLGenerator:
             return self._generate_buyer_purchase(analysis)
         if report_type == self.PRICE_BAND_REPORT:
             return self._generate_price_band(analysis)
+        if report_type == self.COMPARISON_REPORT:
+            return self._generate_comparison(analysis)
 
         return SQLGenerationResult(
             status=SQLGenerationStatus.BLOCKED,
@@ -156,6 +159,30 @@ class SQLGenerator:
                 "BR-002 SaleAlias",
                 "BR-003 AreaAlias",
                 "BR-007 PriceBands",
+            ],
+        )
+
+    def _generate_comparison(
+        self,
+        analysis: RequirementAnalysis,
+    ) -> SQLGenerationResult:
+        """Generate buyer-wise comparison SQL."""
+
+        context = self._build_comparison_context(analysis)
+        sql = self._render_template("comparison_buyer_wise.sql.j2", context)
+
+        return SQLGenerationResult(
+            status=SQLGenerationStatus.GENERATED,
+            sql=sql,
+            report_type=self.COMPARISON_REPORT,
+            reason="Comparison SQL generated.",
+            warnings=[],
+            source_tables=[self.SOURCE_TABLE, self.BUYER_GROUP_TABLE],
+            applied_business_rules=[
+                "BR-001 FYear",
+                "BR-002 SaleAlias",
+                "BR-015 BuyerGroup",
+                "BR-027 HistoricalComparison",
             ],
         )
 
@@ -272,6 +299,50 @@ class SQLGenerator:
 
         context["area_alias"] = self._sql_area_alias(str(context["area_alias"]))
         return context
+
+    def _build_comparison_context(
+        self,
+        analysis: RequirementAnalysis,
+    ) -> dict[str, str | int]:
+        """Validate buyer-wise comparison inputs and build template context."""
+
+        known = analysis.known_information
+        seasons = list(dict.fromkeys(known.seasons))
+        sale_range = self._parse_sale_range(known.sale_range)
+        buyer_group = self._buyer_group_name(known.buyer)
+
+        required_values = {
+            "seasons": seasons if len(seasons) >= 2 else None,
+            "sale_range": known.sale_range,
+            "buyer": buyer_group,
+            "category": known.category,
+            "output_grain": known.output_grain,
+        }
+        missing = [name for name, value in required_values.items() if not value]
+        if missing:
+            raise SQLGenerationError(
+                "Cannot generate Comparison SQL. Missing required field(s): "
+                + ", ".join(missing)
+            )
+
+        metrics = {metric.casefold() for metric in known.metrics}
+        if not {"quantity", "value"}.issubset(metrics):
+            raise SQLGenerationError(
+                "Cannot generate Comparison SQL. Required metrics are quantity and value."
+            )
+        if known.output_grain != "buyer-wise":
+            raise SQLGenerationError(
+                "Cannot generate Comparison SQL. Grouping must be buyer-wise."
+            )
+
+        return {
+            "source_table": self.SOURCE_TABLE,
+            "buyer_group_table": self.BUYER_GROUP_TABLE,
+            "season_list": ", ".join(str(season) for season in seasons[:2]),
+            "sale_filter": self._sale_filter(sale_range),
+            "category": known.category,
+            "buyer_group": buyer_group,
+        }
 
     def _base_context(
         self,

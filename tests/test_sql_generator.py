@@ -85,6 +85,24 @@ def _price_band_analysis() -> RequirementAnalysis:
     )
 
 
+def _comparison_analysis() -> RequirementAnalysis:
+    return RequirementAnalysis(
+        summary="Comparison Report",
+        known_information=KnownInformation(
+            report_type="Comparison Report",
+            seasons=[2025, 2026],
+            sale_range="up to sale 26",
+            buyer="TCPL",
+            category="CTC",
+            metrics=["quantity", "value"],
+            output_grain="buyer-wise",
+        ),
+        sql_generation_allowed=True,
+        decision_status=DecisionStatus.SQL_ALLOWED,
+        metadata={"confidence_score": 0.85},
+    )
+
+
 def test_sql_generated_for_complete_garden_ranking_report() -> None:
     result = SQLGenerator().generate(_garden_ranking_analysis())
 
@@ -315,3 +333,36 @@ def test_existing_reports_still_generate_after_price_band_addition() -> None:
     assert garden_result.status == SQLGenerationStatus.GENERATED
     assert sale_result.status == SQLGenerationStatus.GENERATED
     assert buyer_result.status == SQLGenerationStatus.GENERATED
+
+
+def test_comparison_sql_generated_for_tcpl_buying() -> None:
+    result = SQLGenerator().generate(_comparison_analysis())
+
+    assert result.status == SQLGenerationStatus.GENERATED
+    assert result.report_type == "Comparison Report"
+    assert result.sql is not None
+    assert "TATA CONSUMER PRODUCTS LTD." in result.sql
+
+
+def test_comparison_sql_contains_fyear_in_both_seasons() -> None:
+    result = SQLGenerator().generate(_comparison_analysis())
+
+    assert "FYear IN (2025, 2026)" in result.sql
+    assert "FYear = 2025" not in result.sql
+
+
+def test_comparison_sql_contains_required_filters_and_grouping() -> None:
+    result = SQLGenerator().generate(_comparison_analysis())
+
+    assert "SaleAlias BETWEEN 14 AND 26" in result.sql
+    assert "Category = 'CTC'" in result.sql
+    assert "BuyerMDM = 'TATA CONSUMER PRODUCTS LTD.'" in result.sql
+    assert "GROUP BY FYear, BuyerMDM" in result.sql
+    assert "SAFE_DIVIDE(SUM(Value), SUM(TotalWeight)) AS Avg_Price" in result.sql
+
+
+def test_buyer_purchase_report_still_generates_after_comparison_addition() -> None:
+    result = SQLGenerator().generate(_buyer_purchase_analysis())
+
+    assert result.status == SQLGenerationStatus.GENERATED
+    assert result.report_type == "Buyer Purchase Report"
