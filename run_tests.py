@@ -19,8 +19,11 @@ from engine.requirement_engine.orchestrator import RequirementUnderstandingOrche
 from engine.requirement_engine.prompt_builder import PromptBuilder
 from engine.requirement_engine.response_parser import RequirementResponseParser
 from engine.requirement_engine.validator import RequirementValidator
+from engine.python_generator.python_generator import PythonGenerator
+from engine.python_generator.python_models import PythonGenerationStatus
 from engine.sql_engine.sql_generator import SQLGenerator
 from engine.sql_engine.sql_models import SQLGenerationStatus
+from engine.sql_planner.sql_planner import SQLPlanner
 from engine.sql_review_engine.review_models import SQLReviewStatus
 from engine.sql_review_engine.sql_reviewer import SQLReviewer
 
@@ -119,8 +122,10 @@ def _run_report_flow_tests() -> tuple[int, int]:
         response_parser=RequirementResponseParser(),
         requirement_validator=RequirementValidator(),
     )
+    sql_planner = SQLPlanner()
     sql_generator = SQLGenerator()
     sql_reviewer = SQLReviewer()
+    python_generator = PythonGenerator()
 
     total = 0
     failed = 0
@@ -137,7 +142,8 @@ def _run_report_flow_tests() -> tuple[int, int]:
             assert analysis.known_information.report_type == case.expected_report_type
             assert analysis.decision_status == DecisionStatus.SQL_ALLOWED
 
-            generation_result = sql_generator.generate(analysis)
+            plan = sql_planner.plan(analysis)
+            generation_result = sql_generator.generate(plan)
             assert generation_result.status == SQLGenerationStatus.GENERATED
             assert generation_result.sql
 
@@ -147,6 +153,14 @@ def _run_report_flow_tests() -> tuple[int, int]:
                 generation_result,
             )
             assert review_result.status == SQLReviewStatus.PASS
+
+            python_result = python_generator.generate(
+                plan=plan,
+                sql=generation_result.sql,
+                review_result=review_result,
+            )
+            assert python_result.status == PythonGenerationStatus.GENERATED
+            assert python_result.script
         except Exception:
             failed += 1
             print(f"FAIL {label}")

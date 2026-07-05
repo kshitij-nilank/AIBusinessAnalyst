@@ -23,6 +23,11 @@ from engine.requirement_engine.orchestrator import (
 from engine.requirement_engine.prompt_builder import PromptBuilder
 from engine.requirement_engine.response_parser import RequirementResponseParser
 from engine.requirement_engine.validator import RequirementValidator
+from engine.python_generator.python_generator import PythonGenerator
+from engine.python_generator.python_models import (
+    PythonGenerationResult,
+    PythonGenerationStatus,
+)
 from engine.sql_engine.sql_generator import SQLGenerationError, SQLGenerator
 from engine.sql_engine.sql_models import SQLGenerationStatus
 from engine.sql_planner.plan_models import SQLPlan
@@ -287,6 +292,13 @@ def display_sql_generation(analysis: RequirementAnalysis) -> None:
             generation_result=result,
         )
         display_sql_review(review_result)
+        if plan is not None:
+            python_result = PythonGenerator().generate(
+                plan=plan,
+                sql=result.sql,
+                review_result=review_result,
+            )
+            display_python_generation(python_result)
     elif result.reason:
         print_section("Generated SQL", result.reason)
 
@@ -318,6 +330,18 @@ def display_sql_review(review_result: SQLReviewResult) -> None:
     print_section("Passed Checks", format_list(review_result.passed_checks))
     print_section("Failed Checks", format_list(review_result.failed_checks))
     print_section("Warnings", format_list(review_result.warnings))
+
+
+def display_python_generation(result: PythonGenerationResult) -> None:
+    """Display Python generation result sections."""
+
+    print_section("Python Generation Status", result.status.value)
+    if result.output_filename:
+        print_section("Output Filename", result.output_filename)
+    if result.status == PythonGenerationStatus.GENERATED and result.script:
+        print_section("Generated Python Script", result.script)
+    elif result.reason:
+        print_section("Python Generation Reason", result.reason)
 
 
 def print_section(title: str, content: str) -> None:
